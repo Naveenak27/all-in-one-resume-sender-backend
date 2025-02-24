@@ -1,6 +1,7 @@
 const csv = require('csv-parser');
 const fs = require('fs');
 const xlsx = require('xlsx');
+const MobileDetect = require('mobile-detect');
 
 // Health check
 exports.healthCheck = (req, res) => {
@@ -126,12 +127,12 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
             return res.status(400).json({ error: 'No resume file uploaded' });
         }
 
-        const result = await pool.query('SELECT email FROM csv_data');
-        const emails = result.rows.map(row => row.email);
+        const result = await pool.query('SELECT email, user_agent FROM csv_data');
+        const recipients = result.rows;
         
-        console.log(`Found ${emails.length} email recipients`);
+        console.log(`Found ${recipients.length} email recipients`);
         
-        if (emails.length === 0) {
+        if (recipients.length === 0) {
             console.log('Error: No email recipients found');
             return res.status(400).json({ error: 'No email recipients found' });
         }
@@ -152,9 +153,16 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
 
         console.log('Starting email sending process...');
         
-        for (const recipientEmail of emails) {
+        for (const recipient of recipients) {
             try {
-                console.log(`Attempting to send email to: ${recipientEmail}`);
+                const recipientEmail = recipient.email;
+                const userAgent = recipient.user_agent || '';
+                
+                // Detect if recipient is likely on mobile
+                const md = new MobileDetect(userAgent);
+                const isMobile = md.mobile() !== null;
+                
+                console.log(`Attempting to send email to: ${recipientEmail} (Device: ${isMobile ? 'Mobile' : 'Desktop'})`);
                 
                 const messageId = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}@naveenak.com`;
                 
@@ -280,7 +288,7 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                 </html>
                 `;
                 
-                // Plain text version (for mobile and fallback)
+                // Plain text version (for mobile)
                 const plainText = `
                 Frontend Developer Application
                 
@@ -329,6 +337,7 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                 Portfolio: ${process.env.PORTFOLIO}
                 `;
                 
+                // Send email based on device type
                 const info = await transporter.sendMail({
                     from: {
                         name: senderName,
@@ -342,10 +351,15 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                         'Precedence': 'Bulk',
                         'X-Auto-Response-Suppress': 'OOF, AutoReply',
                         'X-Report-Abuse': `Please report abuse to: ${process.env.EMAIL_USER}`,
-                        'Feedback-ID': messageId
+                        'Feedback-ID': messageId,
+                        // Add mobile-specific headers if needed
+                        ...(isMobile ? {'X-Priority': '5'} : {})
                     },
-                    html: htmlTemplate,
-                    text: plainText,
+                    // For mobile devices, only send plain text
+                    ...(isMobile 
+                        ? { text: plainText } 
+                        : { html: htmlTemplate, text: plainText }  // For desktop, send both
+                    ),
                     attachments: [{
                         filename: resumeFilename,
                         path: resumePath,
@@ -359,19 +373,20 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                     }
                 });
                 
-                console.log(`✅ Email sent successfully to: ${recipientEmail}`);
+                console.log(`✅ Email sent successfully to: ${recipientEmail} (${isMobile ? 'Plain Text' : 'HTML'} format)`);
                 console.log(`Message ID: ${info.messageId}`);
                 console.log(`Response: ${JSON.stringify(info.response)}`);
                 
                 sentCount++;
                 
                 // Add 30-second delay between emails
-                if (sentCount < emails.length) {
-                    console.log(`Waiting 30 seconds before sending next email... (${sentCount}/${emails.length} completed)`);
+                if (sentCount < recipients.length) {
+                    console.log(`Waiting 30 seconds before sending next email... (${sentCount}/${recipients.length} completed)`);
                     await delay(30000); // 30 seconds in milliseconds
                 }
                 
             } catch (emailError) {
+                const recipientEmail = recipient?.email || 'unknown';
                 console.error(`❌ Failed to send email to ${recipientEmail}:`, emailError);
                 failedCount++;
                 failedEmails.push({
@@ -382,7 +397,7 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
         }
 
         console.log('\n--- Email Sending Summary ---');
-        console.log(`Total emails: ${emails.length}`);
+        console.log(`Total emails: ${recipients.length}`);
         console.log(`Successfully sent: ${sentCount}`);
         console.log(`Failed: ${failedCount}`);
         
@@ -400,14 +415,13 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
             message: 'Emails sent successfully with 30-second intervals',
             sentCount: sentCount,
             failedCount: failedCount,
-            totalTime: `${(emails.length - 1) * 30} seconds`
+            totalTime: `${(recipients.length - 1) * 30} seconds`
         });
     } catch (error) {
         console.error('Send emails error:', error);
         res.status(500).json({ error: error.message });
     }
 };
-
 
 exports.getData = (pool) => async (req, res) => {
     try {
