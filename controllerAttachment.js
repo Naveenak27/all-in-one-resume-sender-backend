@@ -122,13 +122,17 @@ exports.uploadFile = (pool) => async (req, res) => {
 exports.sendEmails = (pool, transporter) => async (req, res) => {
     try {
         if (!req.file) {
+            console.log('Error: No resume file uploaded');
             return res.status(400).json({ error: 'No resume file uploaded' });
         }
 
         const result = await pool.query('SELECT email FROM csv_data');
         const emails = result.rows.map(row => row.email);
         
+        console.log(`Found ${emails.length} email recipients`);
+        
         if (emails.length === 0) {
+            console.log('Error: No email recipients found');
             return res.status(400).json({ error: 'No email recipients found' });
         }
 
@@ -137,16 +141,24 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
         const senderName = "NAVEEN K";
         const job = "Frontend Developer";
         
+        console.log(`Resume: ${resumeFilename}, Sender: ${senderName}, Job: ${job}`);
+        
         // Function to delay execution
         const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
         
         let sentCount = 0;
+        let failedCount = 0;
+        let failedEmails = [];
 
+        console.log('Starting email sending process...');
+        
         for (const recipientEmail of emails) {
             try {
+                console.log(`Attempting to send email to: ${recipientEmail}`);
+                
                 const messageId = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}@naveenak.com`;
                 
-                await transporter.sendMail({
+                const info = await transporter.sendMail({
                     from: {
                         name: senderName,
                         address: process.env.EMAIL_USER
@@ -331,31 +343,54 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                     }
                 });
                 
+                console.log(`✅ Email sent successfully to: ${recipientEmail}`);
+                console.log(`Message ID: ${info.messageId}`);
+                console.log(`Response: ${JSON.stringify(info.response)}`);
+                
                 sentCount++;
                 
                 // Add 30-second delay between emails
                 if (sentCount < emails.length) {
+                    console.log(`Waiting 30 seconds before sending next email... (${sentCount}/${emails.length} completed)`);
                     await delay(30000); // 30 seconds in milliseconds
                 }
                 
             } catch (emailError) {
-                console.error(`Failed to send email to ${recipientEmail}:`, emailError);
+                console.error(`❌ Failed to send email to ${recipientEmail}:`, emailError);
+                failedCount++;
+                failedEmails.push({
+                    email: recipientEmail,
+                    error: emailError.message
+                });
             }
         }
 
+        console.log('\n--- Email Sending Summary ---');
+        console.log(`Total emails: ${emails.length}`);
+        console.log(`Successfully sent: ${sentCount}`);
+        console.log(`Failed: ${failedCount}`);
+        
+        if (failedCount > 0) {
+            console.log('\nFailed email addresses:');
+            failedEmails.forEach((item, index) => {
+                console.log(`${index + 1}. ${item.email} - Error: ${item.error}`);
+            });
+        }
+
         fs.unlinkSync(req.file.path);
+        console.log(`Deleted temporary resume file: ${req.file.path}`);
         
         res.json({ 
             message: 'Emails sent successfully with 30-second intervals',
             sentCount: sentCount,
+            failedCount: failedCount,
             totalTime: `${(emails.length - 1) * 30} seconds`
         });
     } catch (error) {
         console.error('Send emails error:', error);
         res.status(500).json({ error: error.message });
     }
-};
-// Get all data
+};// Get all data
 exports.getData = (pool) => async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM csv_data');
