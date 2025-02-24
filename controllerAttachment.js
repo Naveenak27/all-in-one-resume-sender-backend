@@ -158,132 +158,130 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                 
                 const messageId = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}@naveenak.com`;
                 
-                const info = await transporter.sendMail({
-                    from: {
-                        name: senderName,
-                        address: process.env.EMAIL_USER
-                    },
-                    to: recipientEmail,
-                    subject: `Frontend Developer Position - ${job}`,
-                    messageId: `<${messageId}>`,
-                    headers: {
-                        'List-Unsubscribe': `<mailto:${process.env.EMAIL_USER}?subject=unsubscribe>`,
-                        'Precedence': 'Bulk',
-                        'X-Auto-Response-Suppress': 'OOF, AutoReply',
-                        'X-Report-Abuse': `Please report abuse to: ${process.env.EMAIL_USER}`,
-                        'Feedback-ID': messageId
-                    },
-                    html: `
-                <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 680px; margin: 20px auto; background: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: 1px solid #e8e8e8;">
-                    <div style="background: #2b3d4f; padding: 24px; border-radius: 12px 12px 0 0; text-align: center;">
-                        <h1 style="color: #ffffff; margin: 0; font-size: 22px; letter-spacing: 0.5px;">NAVEEN K</h1>
-                        <p style="color: #a0b3c6; margin: 8px 0 0; font-size: 14px;">Frontend Developer Application</p>
-                    </div>
-                
-                    <div style="padding: 32px 40px;">
-                        <p style="color: #4a5568; margin: 0 0 20px; line-height: 1.6;">Dear Hiring Manager,</p>
-                        
-                        <p style="color: #4a5568; margin: 0 0 20px; line-height: 1.6;">
-                            I trust this message finds you well. I am Naveen, a Frontend Developer with over a year of experience crafting responsive web applications. I am writing to express my interest in contributing to your development team.
-                        </p>
-                
-                        <div style="border-left: 3px solid #2b3d4f; padding-left: 20px; margin: 20px 0;">
-                            <p style="color: #4a5568; margin: 0 0 16px; line-height: 1.6;">
-                                Key Technical Proficiencies:
-                            </p>
-                            <ul style="margin: 0; padding: 0; list-style: none;">
-                                <li style="margin: 8px 0; padding-left: 24px; position: relative; color: #4a5568;">
-                                    <span style="position: absolute; left: 0; color: #2b3d4f;">▹</span>
-                                    Frontend Development: HTML5, CSS3, JavaScript (ES6+)
-                                </li>
-                                <li style="margin: 8px 0; padding-left: 24px; position: relative; color: #4a5568;">
-                                    <span style="position: absolute; left: 0; color: #2b3d4f;">▹</span>
-                                    React.js Development: Components, Hooks, Context API
-                                </li>
-                                <li style="margin: 8px 0; padding-left: 24px; position: relative; color: #4a5568;">
-                                    <span style="position: absolute; left: 0; color: #2b3d4f;">▹</span>
-                                    State Management: Redux Toolkit, React Query
-                                </li>
-                                <li style="margin: 8px 0; padding-left: 24px; position: relative; color: #4a5568;">
-                                    <span style="position: absolute; left: 0; color: #2b3d4f;">▹</span>
-                                    Backend Familiarity: Node.js, Express.js, MySQL
-                                </li>
-                            </ul>
+                // Desktop HTML version (rich formatting)
+                const htmlTemplate = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="utf-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>Frontend Developer Application</title>
+                </head>
+                <body style="margin: 0; padding: 0; font-family: 'Segoe UI', Arial, sans-serif; background-color: #f5f5f5;">
+                    <div style="max-width: 680px; margin: 20px auto; background: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: 1px solid #e8e8e8;">
+                        <div style="background: #2b3d4f; padding: 24px; border-radius: 12px 12px 0 0; text-align: center;">
+                            <h1 style="color: #ffffff; margin: 0; font-size: 22px; letter-spacing: 0.5px;">NAVEEN K</h1>
+                            <p style="color: #a0b3c6; margin: 8px 0 0; font-size: 14px;">Frontend Developer Application</p>
                         </div>
-                
-                        <div style="margin: 24px 0;">
-                            <p style="color: #4a5568; margin: 0 0 16px; line-height: 1.6;">
-                                Project Portfolio:
-                            </p>
+                    
+                        <div style="padding: 32px 40px;">
+                            <p style="color: #4a5568; margin: 0 0 20px; line-height: 1.6;">Dear Hiring Manager,</p>
                             
-                            <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 16px;">
-                                <h3 style="color: #2b3d4f; margin: 0 0 12px;">Cleaning Service Web Application</h3>
-                                <p style="color: #4a5568; margin: 0; line-height: 1.6;">
-                                    Created a responsive interface using React.js and Redux Toolkit, featuring reusable components and seamless API integration for real-time data management.
-                                </p>
-                            </div>
-                
-                            <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 16px;">
-                                <h3 style="color: #2b3d4f; margin: 0 0 12px;">Portfolio Website</h3>
-                                <p style="color: #4a5568; margin: 0; line-height: 1.6;">
-                                    Developed a personal portfolio using HTML, CSS, and JavaScript, integrating Firebase for secure form submissions and enhanced user interaction.
-                                </p>
-                            </div>
-                
-                            <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 16px;">
-                                <h3 style="color: #2b3d4f; margin: 0 0 12px;">Khannan Finance Website</h3>
-                                <p style="color: #4a5568; margin: 0; line-height: 1.6;">
-                                    Built a professional finance company website with responsive design, implementing Formspree for reliable contact form functionality and user engagement.
-                                </p>
-                            </div>
-                
-                            <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 16px;">
-                                <h3 style="color: #2b3d4f; margin: 0 0 12px;">Automatic Resume Sender</h3>
-                                <p style="color: #4a5568; margin: 0; line-height: 1.6;">
-                                    Engineered an automated email solution using React.js frontend and Node.js/Express.js backend with Nodemailer, enabling efficient bulk resume distribution through CSV file processing.
-                                </p>
-                            </div>
-                
-                            <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 16px;">
-                                <h3 style="color: #2b3d4f; margin: 0 0 12px;">Vote Tracker</h3>
-                                <p style="color: #4a5568; margin: 0; line-height: 1.6;">
-                                    Developed a React.js voting application with Firebase integration, featuring dynamic candidate selection by state and district, single-vote verification, and real-time top candidate tracking.
-                                </p>
-                            </div>
-                
-                            <div style="background: #f8fafc; padding: 20px; border-radius: 8px;">
-                                <h3 style="color: #2b3d4f; margin: 0 0 12px;">Chennai Gated Website</h3>
-                                <p style="color: #4a5568; margin: 0; line-height: 1.6;">
-                                    Designed and implemented a modern real estate platform using React.js, featuring an intuitive interface for property listings and comprehensive amenity showcases.
-                                </p>
-                            </div>
-                        </div>
-                
-                        <p style="color: #4a5568; margin: 20px 0; line-height: 1.6;">
-                            I welcome the opportunity to discuss how my experience aligns with your team's needs. Please visit my portfolio at naveenak.netlify.app to explore these projects in detail.
-                        </p>
-                
-                        <div style="margin-top: 32px; border-top: 1px solid #e8e8e8; padding-top: 24px;">
-                            <p style="margin: 0 0 8px; color: #4a5568;">
-                                Best regards,<br>
-                                <strong style="color: #2b3d4f;">Naveen K</strong>
+                            <p style="color: #4a5568; margin: 0 0 20px; line-height: 1.6;">
+                                I trust this message finds you well. I am Naveen, a Frontend Developer with over a year of experience crafting responsive web applications. I am writing to express my interest in contributing to your development team.
                             </p>
-                            <div style="margin-top: 12px;">
-                                <p style="color: #4a5568; margin: 4px 0; font-size: 14px;">📞 7548865624</p>
-                                <a href="mailto:${process.env.EMAIL_USER}" style="color: #3182ce; text-decoration: none; font-size: 14px; display: block; margin: 4px 0;">📧 Email</a>
-                                <a href="${process.env.PORTFOLIO}" style="color: #3182ce; text-decoration: none; font-size: 14px; display: block; margin: 4px 0;">🌐 Portfolio</a>
+                    
+                            <div style="border-left: 3px solid #2b3d4f; padding-left: 20px; margin: 20px 0;">
+                                <p style="color: #4a5568; margin: 0 0 16px; line-height: 1.6;">
+                                    Key Technical Proficiencies:
+                                </p>
+                                <ul style="margin: 0; padding: 0; list-style: none;">
+                                    <li style="margin: 8px 0; padding-left: 24px; position: relative; color: #4a5568;">
+                                        <span style="position: absolute; left: 0; color: #2b3d4f;">▹</span>
+                                        Frontend Development: HTML5, CSS3, JavaScript (ES6+)
+                                    </li>
+                                    <li style="margin: 8px 0; padding-left: 24px; position: relative; color: #4a5568;">
+                                        <span style="position: absolute; left: 0; color: #2b3d4f;">▹</span>
+                                        React.js Development: Components, Hooks, Context API
+                                    </li>
+                                    <li style="margin: 8px 0; padding-left: 24px; position: relative; color: #4a5568;">
+                                        <span style="position: absolute; left: 0; color: #2b3d4f;">▹</span>
+                                        State Management: Redux Toolkit, React Query
+                                    </li>
+                                    <li style="margin: 8px 0; padding-left: 24px; position: relative; color: #4a5568;">
+                                        <span style="position: absolute; left: 0; color: #2b3d4f;">▹</span>
+                                        Backend Familiarity: Node.js, Express.js, MySQL
+                                    </li>
+                                </ul>
+                            </div>
+                    
+                            <div style="margin: 24px 0;">
+                                <p style="color: #4a5568; margin: 0 0 16px; line-height: 1.6;">
+                                    Project Portfolio:
+                                </p>
+                                
+                                <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 16px;">
+                                    <h3 style="color: #2b3d4f; margin: 0 0 12px;">Cleaning Service Web Application</h3>
+                                    <p style="color: #4a5568; margin: 0; line-height: 1.6;">
+                                        Created a responsive interface using React.js and Redux Toolkit, featuring reusable components and seamless API integration for real-time data management.
+                                    </p>
+                                </div>
+                    
+                                <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 16px;">
+                                    <h3 style="color: #2b3d4f; margin: 0 0 12px;">Portfolio Website</h3>
+                                    <p style="color: #4a5568; margin: 0; line-height: 1.6;">
+                                        Developed a personal portfolio using HTML, CSS, and JavaScript, integrating Firebase for secure form submissions and enhanced user interaction.
+                                    </p>
+                                </div>
+                    
+                                <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 16px;">
+                                    <h3 style="color: #2b3d4f; margin: 0 0 12px;">Khannan Finance Website</h3>
+                                    <p style="color: #4a5568; margin: 0; line-height: 1.6;">
+                                        Built a professional finance company website with responsive design, implementing Formspree for reliable contact form functionality and user engagement.
+                                    </p>
+                                </div>
+                    
+                                <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 16px;">
+                                    <h3 style="color: #2b3d4f; margin: 0 0 12px;">Automatic Resume Sender</h3>
+                                    <p style="color: #4a5568; margin: 0; line-height: 1.6;">
+                                        Engineered an automated email solution using React.js frontend and Node.js/Express.js backend with Nodemailer, enabling efficient bulk resume distribution through CSV file processing.
+                                    </p>
+                                </div>
+                    
+                                <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 16px;">
+                                    <h3 style="color: #2b3d4f; margin: 0 0 12px;">Vote Tracker</h3>
+                                    <p style="color: #4a5568; margin: 0; line-height: 1.6;">
+                                        Developed a React.js voting application with Firebase integration, featuring dynamic candidate selection by state and district, single-vote verification, and real-time top candidate tracking.
+                                    </p>
+                                </div>
+                    
+                                <div style="background: #f8fafc; padding: 20px; border-radius: 8px;">
+                                    <h3 style="color: #2b3d4f; margin: 0 0 12px;">Chennai Gated Website</h3>
+                                    <p style="color: #4a5568; margin: 0; line-height: 1.6;">
+                                        Designed and implemented a modern real estate platform using React.js, featuring an intuitive interface for property listings and comprehensive amenity showcases.
+                                    </p>
+                                </div>
+                            </div>
+                    
+                            <p style="color: #4a5568; margin: 20px 0; line-height: 1.6;">
+                                I welcome the opportunity to discuss how my experience aligns with your team's needs. Please visit my portfolio at naveenak.netlify.app to explore these projects in detail.
+                            </p>
+                    
+                            <div style="margin-top: 32px; border-top: 1px solid #e8e8e8; padding-top: 24px;">
+                                <p style="margin: 0 0 8px; color: #4a5568;">
+                                    Best regards,<br>
+                                    <strong style="color: #2b3d4f;">Naveen K</strong>
+                                </p>
+                                <div style="margin-top: 12px;">
+                                    <p style="color: #4a5568; margin: 4px 0; font-size: 14px;">📞 7548865624</p>
+                                    <a href="mailto:${process.env.EMAIL_USER}" style="color: #3182ce; text-decoration: none; font-size: 14px; display: block; margin: 4px 0;">📧 Email</a>
+                                    <a href="${process.env.PORTFOLIO}" style="color: #3182ce; text-decoration: none; font-size: 14px; display: block; margin: 4px 0;">🌐 Portfolio</a>
+                                </div>
                             </div>
                         </div>
+                    
+                        <div style="background: #f8f9fa; padding: 20px; text-align: center; border-radius: 0 0 12px 12px;">
+                            <p style="color: #718096; font-size: 12px; margin: 8px 0;">
+                                To opt out of future communications, please reply with "unsubscribe"
+                            </p>
+                        </div>
                     </div>
+                </body>
+                </html>
+                `;
                 
-                    <div style="background: #f8f9fa; padding: 20px; text-align: center; border-radius: 0 0 12px 12px;">
-                        <p style="color: #718096; font-size: 12px; margin: 8px 0;">
-                            To opt out of future communications, please reply with "unsubscribe"
-                        </p>
-                    </div>
-                </div>
-                `,
-                    text: `
+                // Plain text version (for mobile and fallback)
+                const plainText = `
                 Frontend Developer Application
                 
                 Dear Hiring Manager,
@@ -329,7 +327,25 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                 Phone: 7548865624
                 Email: ${process.env.EMAIL_USER}
                 Portfolio: ${process.env.PORTFOLIO}
-                `,
+                `;
+                
+                const info = await transporter.sendMail({
+                    from: {
+                        name: senderName,
+                        address: process.env.EMAIL_USER
+                    },
+                    to: recipientEmail,
+                    subject: `Frontend Developer Position - ${job}`,
+                    messageId: `<${messageId}>`,
+                    headers: {
+                        'List-Unsubscribe': `<mailto:${process.env.EMAIL_USER}?subject=unsubscribe>`,
+                        'Precedence': 'Bulk',
+                        'X-Auto-Response-Suppress': 'OOF, AutoReply',
+                        'X-Report-Abuse': `Please report abuse to: ${process.env.EMAIL_USER}`,
+                        'Feedback-ID': messageId
+                    },
+                    html: htmlTemplate,
+                    text: plainText,
                     attachments: [{
                         filename: resumeFilename,
                         path: resumePath,
@@ -390,7 +406,9 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
         console.error('Send emails error:', error);
         res.status(500).json({ error: error.message });
     }
-};// Get all data
+};
+
+
 exports.getData = (pool) => async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM csv_data');
