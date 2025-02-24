@@ -119,7 +119,6 @@ exports.uploadFile = (pool) => async (req, res) => {
     }
 };
 // Send emails
-// Complete sendEmails function with bounce handling capability
 exports.sendEmails = (pool, transporter) => async (req, res) => {
     try {
         if (!req.file) {
@@ -363,30 +362,6 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                     email: recipientEmail,
                     error: emailError.message
                 });
-                
-                // If the error indicates an invalid or non-existent email, remove it from the database
-                if (emailError.message.includes('Address not found') || 
-                    emailError.message.includes('Invalid recipient') ||
-                    emailError.message.includes('Recipient address rejected') ||
-                    emailError.message.includes('mailbox unavailable') ||
-                    emailError.message.includes('recipient rejected')) {
-                    
-                    try {
-                        console.log(`Attempting to remove invalid email from database: ${recipientEmail}`);
-                        const deleteResult = await pool.query(
-                            'DELETE FROM csv_data WHERE email = $1 RETURNING *',
-                            [recipientEmail]
-                        );
-                        
-                        if (deleteResult.rowCount > 0) {
-                            console.log(`✅ Successfully removed invalid email from database: ${recipientEmail}`);
-                        } else {
-                            console.log(`⚠️ Failed to remove email from database: ${recipientEmail}`);
-                        }
-                    } catch (dbError) {
-                        console.error(`Error removing invalid email from database: ${recipientEmail}`, dbError);
-                    }
-                }
             }
         }
 
@@ -415,105 +390,7 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
         console.error('Send emails error:', error);
         res.status(500).json({ error: error.message });
     }
-};
-
-// Function to handle bounce notifications from email servers
-exports.handleBounceNotification = (pool) => async (req, res) => {
-    try {
-        const { emailContent } = req.body;
-        
-        if (!emailContent) {
-            return res.status(400).json({ error: 'No email content provided' });
-        }
-        
-        // Extract the bounced email address using regex
-        // Looking for patterns like "message wasn't delivered to info@buddypowerintotech.com"
-        const bounceRegex = /message wasn't delivered to\s+([^\s<]+@[^\s>]+)/i;
-        const match = emailContent.match(bounceRegex);
-        
-        if (!match || !match[1]) {
-            return res.status(400).json({ 
-                error: 'Could not extract bounced email address',
-                content: emailContent
-            });
-        }
-        
-        const bouncedEmail = match[1].trim();
-        console.log(`Processing bounce notification for: ${bouncedEmail}`);
-        
-        // Remove the bounced email from the database
-        const deleteResult = await pool.query(
-            'DELETE FROM csv_data WHERE email = $1 RETURNING *',
-            [bouncedEmail]
-        );
-        
-        if (deleteResult.rowCount > 0) {
-            console.log(`✅ Successfully removed bounced email: ${bouncedEmail}`);
-            return res.json({
-                success: true,
-                message: `Email ${bouncedEmail} has been removed from the database`
-            });
-        } else {
-            console.log(`⚠️ Email not found in database: ${bouncedEmail}`);
-            return res.json({
-                success: false,
-                message: `Email ${bouncedEmail} was not found in the database`
-            });
-        }
-    } catch (error) {
-        console.error('Error handling bounce notification:', error);
-        return res.status(500).json({ error: error.message });
-    }
-};
-
-// Example of how to setup the routes in your Express app
-exports.setupRoutes = (app, pool, upload) => {
-    // Route for sending emails
-    app.post('/api/send-emails', upload.single('resume'), exports.sendEmails(pool, transporter));
-    
-    // Route for processing bounce notifications
-    app.post('/api/handle-bounce', exports.handleBounceNotification(pool));
-    
-    // Route for manually removing an email address
-    app.post('/api/remove-email', async (req, res) => {
-        try {
-            const { email } = req.body;
-            
-            if (!email) {
-                return res.status(400).json({ error: 'Email address is required' });
-            }
-            
-            const deleteResult = await pool.query(
-                'DELETE FROM csv_data WHERE email = $1 RETURNING *',
-                [email]
-            );
-            
-            if (deleteResult.rowCount > 0) {
-                return res.json({
-                    success: true,
-                    message: `Email ${email} has been removed from the database`
-                });
-            } else {
-                return res.json({
-                    success: false,
-                    message: `Email ${email} was not found in the database`
-                });
-            }
-        } catch (error) {
-            console.error('Error removing email:', error);
-            return res.status(500).json({ error: error.message });
-        }
-    });
-};
-
-
-
-
-
-
-
-
-// Get all data
+};// Get all data
 exports.getData = (pool) => async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM csv_data');
