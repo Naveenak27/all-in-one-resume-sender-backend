@@ -279,11 +279,13 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                         </div>
                     </div>
                 
-                    <div style="background: #f8f9fa; padding: 20px; text-align: center; border-radius: 0 0 12px 12px;">
-                        <p style="color: #718096; font-size: 12px; margin: 8px 0;">
-                            To opt out of future communications, please reply with "unsubscribe"
-                        </p>
-                    </div>
+<div style="background: linear-gradient(to right, #f8f9fa, #edf2f7); padding: 20px; text-align: center; border-radius: 0 0 12px 12px; border-top: 1px solid #e2e8f0; margin-top: 25px; font-family: Arial, sans-serif;">
+  <p style="color: #2d3748; font-size: 14px; margin: 0 0 12px 0; font-weight: 500; letter-spacing: 0.3px;">Connecting talent with opportunity through innovation</p>
+  <p style="color: #4a5568; font-size: 13px; margin: 0 0 15px 0; line-height: 1.5; max-width: 500px; display: inline-block;">
+    This application was delivered using a thoughtfully designed distribution system that streamlines the connection between qualified professionals and forward-thinking organizations.
+  </p>
+  <p style="color: #718096; font-size: 12px; margin: 0;"> To opt out of future communications, please reply with "unsubscribe"</p>
+</div>
                 </div>
                 `,
                     text: `
