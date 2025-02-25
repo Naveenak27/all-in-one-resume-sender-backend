@@ -117,8 +117,11 @@ exports.uploadFile = (pool) => async (req, res) => {
         console.error('Upload error:', error);
         res.status(500).json({ error: error.message });
     }
+
 };
-// Send emails
+
+
+
 exports.sendEmails = (pool, transporter) => async (req, res) => {
     try {
         if (!req.file) {
@@ -164,7 +167,7 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                         address: process.env.EMAIL_USER
                     },
                     to: recipientEmail,
-                    subject: `Frontend Developer Position - ${job}`,
+                    subject: `React.js Frontend Developer with Project Portfolio - NAVEEN K`,
                     messageId: `<${messageId}>`,
                     headers: {
                         'List-Unsubscribe': `<mailto:${process.env.EMAIL_USER}?subject=unsubscribe>`,
@@ -284,7 +287,7 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                 </div>
                 `,
                     text: `
-                Frontend Developer Application
+                React.js Frontend Developer with Project Portfolio
                 
                 Dear Hiring Manager,
                 
@@ -390,7 +393,7 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
         console.error('Send emails error:', error);
         res.status(500).json({ error: error.message });
     }
-};// Get all data
+};
 
 
 
