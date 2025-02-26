@@ -6,7 +6,6 @@ const xlsx = require('xlsx');
 exports.healthCheck = (req, res) => {
     res.json({ status: 'Server is running' });
 };
-
 // Delete single record
 exports.deleteRecord = (pool) => async (req, res) => {
     try {
@@ -123,7 +122,12 @@ exports.uploadFile = (pool) => async (req, res) => {
 
 
 exports.sendEmails = (pool, transporter) => async (req, res) => {
+    
     try {
+        console.log('Environment variables:');
+        console.log('EMAIL_USER:', process.env.EMAIL_USER);
+        console.log('EMAIL_PASS:', 'HIDDEN FOR SECURITY'); // Don't log the actual password
+        console.log('PORTFOLIO:', process.env.PORTFOLIO);
         if (!req.file) {
             console.log('Error: No resume file uploaded');
             return res.status(400).json({ error: 'No resume file uploaded' });
