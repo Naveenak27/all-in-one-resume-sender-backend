@@ -58,6 +58,7 @@ app.post('/api/add-email', controller.addEmail(pool));
 app.post('/api/upload', upload.single('csvFile'), controller.uploadFile(pool));
 app.post('/api/send-emails', upload.single('resume'), controller.sendEmails(pool, transporter));
 app.get('/api/data', controller.getData(pool));
+app.post('/api/send-single-email', upload.single('resume'), controller.sendSingleEmail(pool, transporter));
 
 const PORT = 3002;
 app.listen(PORT, () => {
