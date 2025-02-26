@@ -30,7 +30,7 @@ exports.deleteAllRecords = (pool) => async (req, res) => {
 // Add single email
 exports.addEmail = (pool) => async (req, res) => {
     try {
-        const { email } = req.body;
+        const email = req.body.singleEmail || req.body.email;
         await pool.query('INSERT INTO csv_data (email) VALUES ($1)', [email]);
         res.json({ message: 'Email added successfully' });
     } catch (error) {
