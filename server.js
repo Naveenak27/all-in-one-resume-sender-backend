@@ -17,6 +17,11 @@ console.log('Environment variables loaded:', {
   PORTFOLIO: process.env.PORTFOLIO ? 'Set' : 'Undefined'
 });
 
+console.log('Email Configuration:', {
+    EMAIL_USER: process.env.EMAIL_USER,
+    // Mask the password for security
+    EMAIL_PASS: process.env.EMAIL_PASS ? '****' : 'Not Set'
+});
 // Configure multer for file uploads
 const storage = multer.diskStorage({
     destination: './uploads/',

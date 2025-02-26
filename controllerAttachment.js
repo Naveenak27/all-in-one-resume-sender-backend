@@ -208,36 +208,47 @@ const createEmailWithTracker = (senderName, senderEmail, portfolioUrl, trackingI
     return originalHtml.replace('</body>', `${trackingPixel}</body>`);
 };
 
+
+
+
 // Email tracking endpoint
 exports.trackEmailOpen = (pool) => async (req, res) => {
+    const { trackingId } = req.params;
+    
     try {
-        const { trackingId } = req.params;
-        
-        // Ensure tracking table exists
-        await createTrackingTable(pool);
-        
-        // Update tracking record
-        await pool.query(`
+        // First update the tracking record
+        const updateResult = await pool.query(`
             UPDATE email_tracking 
             SET 
-                opened_at = CASE WHEN opened_at IS NULL THEN CURRENT_TIMESTAMP ELSE opened_at END,
-                open_count = open_count + 1
+                opened_at = COALESCE(opened_at, CURRENT_TIMESTAMP),
+                open_count = open_count + 1,
+                is_opened = true
             WHERE tracking_id = $1
+            RETURNING *
         `, [trackingId]);
-        
-        // Return a transparent 1x1 pixel
-        const transparentPixel = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
-        res.setHeader('Content-Type', 'image/gif');
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-        res.send(transparentPixel);
+
+        // Log successful tracking
+        if (updateResult.rows[0]) {
+            console.log(`Email tracked: ${updateResult.rows[0].email}`);
+        }
+
+        // Send tracking pixel
+        const pixel = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+        res.writeHead(200, {
+            'Content-Type': 'image/gif',
+            'Content-Length': pixel.length,
+            'Cache-Control': 'private, no-cache, no-store, must-revalidate',
+            'Expires': '0',
+            'Pragma': 'no-cache'
+        });
+        res.end(pixel);
+
     } catch (error) {
         console.error('Tracking error:', error);
-        // Still return the transparent pixel to avoid errors in email clients
-        const transparentPixel = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
-        res.setHeader('Content-Type', 'image/gif');
-        res.send(transparentPixel);
+        // Still send pixel even if tracking fails
+        const pixel = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+        res.writeHead(200, {'Content-Type': 'image/gif'});
+        res.end(pixel);
     }
 };
 
