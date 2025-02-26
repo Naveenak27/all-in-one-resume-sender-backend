@@ -170,6 +170,8 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                         name: senderName,
                         address: process.env.EMAIL_USER
                     },
+
+                    
                     to: recipientEmail,
                     subject: `React.js Frontend Developer with Project Portfolio - NAVEEN K`,
                     messageId: `<${messageId}>`,

@@ -36,8 +36,8 @@ const pool = new Pool({
 const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
-        user: 'naveenformsubmit@gmail.com',
-        pass: 'tipa dtfm dxls mqkd'
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
     }
 });
 
