@@ -20,13 +20,18 @@ exports.deleteRecord = (pool) => async (req, res) => {
 // Delete all records
 exports.deleteAllRecords = (pool) => async (req, res) => {
     try {
-        await pool.query('DELETE FROM csv_data');
-        res.json({ message: 'All records deleted successfully' });
+        // Set a query timeout
+        const result = await pool.query('DELETE FROM csv_data');
+        console.log(`Deleted ${result.rowCount || 'all'} records`);
+        res.json({ 
+            message: 'All records deleted successfully',
+            count: result.rowCount || 0
+        });
     } catch (error) {
+        console.error('Error deleting all records:', error);
         res.status(500).json({ error: error.message });
     }
 };
-
 // Add single email
 exports.addEmail = (pool) => async (req, res) => {
     try {
