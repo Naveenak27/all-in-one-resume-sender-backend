@@ -355,7 +355,7 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                 // Add 30-second delay between emails
                 if (sentCount < emails.length) {
                     console.log(`Waiting 30 seconds before sending next email... (${sentCount}/${emails.length} completed)`);
-                    await delay(30000); // 30 seconds in milliseconds
+                    await delay(90000); // 30 seconds in milliseconds
                 }
                 
             } catch (emailError) {
