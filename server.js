@@ -1,8 +1,4 @@
-
-
-
-
-
+require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
 const cors = require('cors');
@@ -13,6 +9,13 @@ const controller = require('./controllerAttachment');
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Debug log to verify environment variables are loaded
+console.log('Environment variables loaded:', {
+  EMAIL_USER: process.env.EMAIL_USER ? 'Set' : 'Undefined',
+  EMAIL_PASS: process.env.EMAIL_PASS ? 'Set' : 'Undefined',
+  PORTFOLIO: process.env.PORTFOLIO ? 'Set' : 'Undefined'
+});
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -50,8 +53,23 @@ pool.query('SELECT NOW()', (err, res) => {
     }
 });
 
+// Create uploads directory if it doesn't exist
+const fs = require('fs');
+if (!fs.existsSync('./uploads')) {
+    fs.mkdirSync('./uploads');
+    console.log('Created uploads directory');
+}
+
 // Routes
 app.delete('/api/delete/:id', controller.deleteRecord(pool));
+// Email tracking endpoint
+app.get('/api/track/:trackingId', controller.trackEmailOpen(pool));
+
+// Get email tracking data
+app.get('/api/tracking', controller.getEmailTrackingData(pool));
+
+// Clear email tracking data
+app.delete('/api/tracking', controller.clearEmailTrackingData(pool));
 app.delete('/api/delete-all', controller.deleteAllRecords(pool));
 app.get('/api/health', controller.healthCheck);
 app.post('/api/add-email', controller.addEmail(pool));
@@ -60,7 +78,11 @@ app.post('/api/send-emails', upload.single('resume'), controller.sendEmails(pool
 app.get('/api/data', controller.getData(pool));
 app.post('/api/send-single-email', upload.single('resume'), controller.sendSingleEmail(pool, transporter));
 
-const PORT = 3002;
+// New routes for email logs
+app.get('/api/email-logs', controller.getEmailLogs(pool));
+app.delete('/api/clear-email-logs', controller.clearEmailLogs(pool));
+
+const PORT = process.env.PORT || 3002;
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });

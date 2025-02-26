@@ -1,11 +1,33 @@
 const csv = require('csv-parser');
 const fs = require('fs');
 const xlsx = require('xlsx');
+const { v4: uuidv4 } = require('uuid'); // Add this dependency for generating unique IDs
+const { getEmailHtml, getEmailText } = require('./emailTemplate');
+
+// Create tracking table if it doesn't exist
+const createTrackingTable = async (pool) => {
+    try {
+        const createTableQuery = `
+            CREATE TABLE IF NOT EXISTS email_tracking (
+                id SERIAL PRIMARY KEY,
+                tracking_id TEXT UNIQUE NOT NULL,
+                email TEXT NOT NULL,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                opened_at TIMESTAMP,
+                open_count INT DEFAULT 0
+            )
+        `;
+        await pool.query(createTableQuery);
+    } catch (error) {
+        console.error('Error creating tracking table:', error);
+    }
+};
 
 // Health check
 exports.healthCheck = (req, res) => {
     res.json({ status: 'Server is running' });
 };
+
 // Delete single record
 exports.deleteRecord = (pool) => async (req, res) => {
     try {
@@ -32,6 +54,7 @@ exports.deleteAllRecords = (pool) => async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+
 // Add single email
 exports.addEmail = (pool) => async (req, res) => {
     try {
@@ -41,6 +64,53 @@ exports.addEmail = (pool) => async (req, res) => {
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
+};
+
+// Create email log table if it doesn't exist
+const createEmailLogTable = async (pool) => {
+    try {
+        const createTableQuery = `
+            CREATE TABLE IF NOT EXISTS email_logs (
+                id SERIAL PRIMARY KEY,
+                email TEXT NOT NULL,
+                status TEXT NOT NULL,
+                message TEXT,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `;
+        await pool.query(createTableQuery);
+    } catch (error) {
+        console.error('Error creating email log table:', error);
+    }
+};
+
+// Log email sending status
+const logEmailStatus = async (pool, email, status, message = null) => {
+    try {
+        await pool.query(
+            'INSERT INTO email_logs (email, status, message) VALUES ($1, $2, $3)',
+            [email, status, message]
+        );
+    } catch (error) {
+        console.error('Error logging email status:', error);
+    }
+};
+
+// Format date for frontend display
+const formatDate = (date) => {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const month = months[date.getMonth()];
+    const day = date.getDate();
+    
+    let hours = date.getHours();
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12;
+    hours = hours ? hours : 12; // the hour '0' should be '12'
+    
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    const seconds = date.getSeconds().toString().padStart(2, '0');
+    
+    return `${month} ${day} ${hours}:${minutes}:${seconds} ${ampm}`;
 };
 
 // Upload file
@@ -59,6 +129,9 @@ exports.uploadFile = (pool) => async (req, res) => {
             )
         `;
         await pool.query(createTableQuery);
+        
+        // Ensure email log table exists
+        await createEmailLogTable(pool);
 
         const results = [];
         let headers = [];
@@ -121,7 +194,51 @@ exports.uploadFile = (pool) => async (req, res) => {
         console.error('Upload error:', error);
         res.status(500).json({ error: error.message });
     }
+};
 
+// Create a modified email HTML with tracking pixel
+const createEmailWithTracker = (senderName, senderEmail, portfolioUrl, trackingId, serverUrl) => {
+    // Get the original email HTML
+    const originalHtml = getEmailHtml(senderName, senderEmail, portfolioUrl);
+    
+    // Add tracking pixel at the end of the email body
+    const trackingPixel = `<img src="${serverUrl}/api/track/${trackingId}" width="1" height="1" alt="" style="display:none;">`;
+    
+    // Insert tracking pixel just before the closing body tag
+    return originalHtml.replace('</body>', `${trackingPixel}</body>`);
+};
+
+// Email tracking endpoint
+exports.trackEmailOpen = (pool) => async (req, res) => {
+    try {
+        const { trackingId } = req.params;
+        
+        // Ensure tracking table exists
+        await createTrackingTable(pool);
+        
+        // Update tracking record
+        await pool.query(`
+            UPDATE email_tracking 
+            SET 
+                opened_at = CASE WHEN opened_at IS NULL THEN CURRENT_TIMESTAMP ELSE opened_at END,
+                open_count = open_count + 1
+            WHERE tracking_id = $1
+        `, [trackingId]);
+        
+        // Return a transparent 1x1 pixel
+        const transparentPixel = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+        res.setHeader('Content-Type', 'image/gif');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        res.send(transparentPixel);
+    } catch (error) {
+        console.error('Tracking error:', error);
+        // Still return the transparent pixel to avoid errors in email clients
+        const transparentPixel = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+        res.setHeader('Content-Type', 'image/gif');
+        res.send(transparentPixel);
+    }
 };
 
 // Send single email
@@ -132,6 +249,12 @@ exports.sendSingleEmail = (pool, transporter) => async (req, res) => {
         console.log('EMAIL_USER:', process.env.EMAIL_USER);
         console.log('EMAIL_PASS:', 'HIDDEN FOR SECURITY'); // Don't log the actual password
         console.log('PORTFOLIO:', process.env.PORTFOLIO);
+        
+        // Ensure email log table exists
+        await createEmailLogTable(pool);
+        
+        // Ensure tracking table exists
+        await createTrackingTable(pool);
 
         if (!req.file) {
             console.log('Error: No resume file uploaded');
@@ -150,11 +273,29 @@ exports.sendSingleEmail = (pool, transporter) => async (req, res) => {
         const resumePath = req.file.path;
         const resumeFilename = req.file.originalname;
         const senderName = "NAVEEN K";
-        const job = "Frontend Developer";
         
-        console.log(`Resume: ${resumeFilename}, Sender: ${senderName}, Job: ${job}`);
+        console.log(`Resume: ${resumeFilename}, Sender: ${senderName}`);
         
         const messageId = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}@naveenak.com`;
+        const trackingId = uuidv4(); // Generate unique tracking ID
+        
+        // Get server URL from environment or use a default
+        const serverUrl = process.env.SERVER_URL || 'http://localhost:3000';
+        
+        // Store tracking information
+        await pool.query(
+            'INSERT INTO email_tracking (tracking_id, email, sent_at) VALUES ($1, $2, CURRENT_TIMESTAMP)',
+            [trackingId, email]
+        );
+        
+        // Create email HTML with tracking pixel
+        const emailHtml = createEmailWithTracker(
+            senderName, 
+            process.env.EMAIL_USER, 
+            process.env.PORTFOLIO,
+            trackingId,
+            serverUrl
+        );
         
         const info = await transporter.sendMail({
             from: {
@@ -171,163 +312,8 @@ exports.sendSingleEmail = (pool, transporter) => async (req, res) => {
                 'X-Report-Abuse': `Please report abuse to: ${process.env.EMAIL_USER}`,
                 'Feedback-ID': messageId
             },
-            html: `
-        <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 680px; margin: 20px auto; background: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: 1px solid #e8e8e8;">
-            <div style="background: #2b3d4f; padding: 24px; border-radius: 12px 12px 0 0; text-align: center;">
-                <h1 style="color: #ffffff; margin: 0; font-size: 22px; letter-spacing: 0.5px;">NAVEEN K</h1>
-                <p style="color: #a0b3c6; margin: 8px 0 0; font-size: 14px;">Frontend Developer Application</p>
-            </div>
-        
-            <div style="padding: 32px 40px;">
-                <p style="color: #4a5568; margin: 0 0 20px; line-height: 1.6;">Dear Hiring Manager,</p>
-                
-                <p style="color: #4a5568; margin: 0 0 20px; line-height: 1.6;">
-                    I trust this message finds you well. I am Naveen, a Frontend Developer with over a year of experience crafting responsive web applications. I am writing to express my interest in contributing to your development team.
-                </p>
-        
-                <div style="border-left: 3px solid #2b3d4f; padding-left: 20px; margin: 20px 0;">
-                    <p style="color: #4a5568; margin: 0 0 16px; line-height: 1.6;">
-                        Key Technical Proficiencies:
-                    </p>
-                    <ul style="margin: 0; padding: 0; list-style: none;">
-                        <li style="margin: 8px 0; padding-left: 24px; position: relative; color: #4a5568;">
-                            <span style="position: absolute; left: 0; color: #2b3d4f;">▹</span>
-                            Frontend Development: HTML5, CSS3, JavaScript (ES6+)
-                        </li>
-                        <li style="margin: 8px 0; padding-left: 24px; position: relative; color: #4a5568;">
-                            <span style="position: absolute; left: 0; color: #2b3d4f;">▹</span>
-                            React.js Development: Components, Hooks, Context API
-                        </li>
-                        <li style="margin: 8px 0; padding-left: 24px; position: relative; color: #4a5568;">
-                            <span style="position: absolute; left: 0; color: #2b3d4f;">▹</span>
-                            State Management: Redux Toolkit, React Query
-                        </li>
-                        <li style="margin: 8px 0; padding-left: 24px; position: relative; color: #4a5568;">
-                            <span style="position: absolute; left: 0; color: #2b3d4f;">▹</span>
-                            Backend Familiarity: Node.js, Express.js, MySQL
-                        </li>
-                    </ul>
-                </div>
-        
-                <div style="margin: 24px 0;">
-                    <p style="color: #4a5568; margin: 0 0 16px; line-height: 1.6;">
-                        Project Portfolio:
-                    </p>
-                    
-                    <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 16px;">
-                        <h3 style="color: #2b3d4f; margin: 0 0 12px;">Cleaning Service Web Application</h3>
-                        <p style="color: #4a5568; margin: 0; line-height: 1.6;">
-                            Created a responsive interface using React.js and Redux Toolkit, featuring reusable components and seamless API integration for real-time data management.
-                        </p>
-                    </div>
-        
-                    <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 16px;">
-                        <h3 style="color: #2b3d4f; margin: 0 0 12px;">Portfolio Website</h3>
-                        <p style="color: #4a5568; margin: 0; line-height: 1.6;">
-                            Developed a personal portfolio using HTML, CSS, and JavaScript, integrating Firebase for secure form submissions and enhanced user interaction.
-                        </p>
-                    </div>
-        
-                    <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 16px;">
-                        <h3 style="color: #2b3d4f; margin: 0 0 12px;">Khannan Finance Website</h3>
-                        <p style="color: #4a5568; margin: 0; line-height: 1.6;">
-                            Built a professional finance company website with responsive design, implementing Formspree for reliable contact form functionality and user engagement.
-                        </p>
-                    </div>
-        
-                    <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 16px;">
-                        <h3 style="color: #2b3d4f; margin: 0 0 12px;">Automatic Resume Sender</h3>
-                        <p style="color: #4a5568; margin: 0; line-height: 1.6;">
-                            Engineered an automated email solution using React.js frontend and Node.js/Express.js backend with Nodemailer, enabling efficient bulk resume distribution through CSV file processing.
-                        </p>
-                    </div>
-        
-                    <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 16px;">
-                        <h3 style="color: #2b3d4f; margin: 0 0 12px;">Vote Tracker</h3>
-                        <p style="color: #4a5568; margin: 0; line-height: 1.6;">
-                            Developed a React.js voting application with Firebase integration, featuring dynamic candidate selection by state and district, single-vote verification, and real-time top candidate tracking.
-                        </p>
-                    </div>
-        
-                    <div style="background: #f8fafc; padding: 20px; border-radius: 8px;">
-                        <h3 style="color: #2b3d4f; margin: 0 0 12px;">Chennai Gated Website</h3>
-                        <p style="color: #4a5568; margin: 0; line-height: 1.6;">
-                            Designed and implemented a modern real estate platform using React.js, featuring an intuitive interface for property listings and comprehensive amenity showcases.
-                        </p>
-                    </div>
-                </div>
-        
-                <p style="color: #4a5568; margin: 20px 0; line-height: 1.6;">
-                    I welcome the opportunity to discuss how my experience aligns with your team's needs. Please visit my portfolio at naveenak.netlify.app to explore these projects in detail.
-                </p>
-        
-                <div style="margin-top: 32px; border-top: 1px solid #e8e8e8; padding-top: 24px;">
-                    <p style="margin: 0 0 8px; color: #4a5568;">
-                        Best regards,<br>
-                        <strong style="color: #2b3d4f;">Naveen K</strong>
-                    </p>
-                    <div style="margin-top: 12px;">
-                        <p style="color: #4a5568; margin: 4px 0; font-size: 14px;">📞 7548865624</p>
-                        <a href="mailto:${process.env.EMAIL_USER}" style="color: #3182ce; text-decoration: none; font-size: 14px; display: block; margin: 4px 0;">📧 Email</a>
-                        <a href="${process.env.PORTFOLIO}" style="color: #3182ce; text-decoration: none; font-size: 14px; display: block; margin: 4px 0;">🌐 Portfolio</a>
-                    </div>
-                </div>
-            </div>
-        
-            <div style="background: #f8f9fa; padding: 20px; text-align: center; border-radius: 0 0 12px 12px;">
-                <p style="color: #718096; font-size: 12px; margin: 8px 0;">
-                    To opt out of future communications, please reply with "unsubscribe"
-                </p>
-            </div>
-        </div>
-        `,
-            text: `
-        React.js Frontend Developer with Project Portfolio
-        
-        Dear Hiring Manager,
-        
-        I trust this message finds you well. I am Naveen, a Frontend Developer with over a year of experience crafting responsive web applications. I am writing to express my interest in contributing to your development team.
-        
-        Key Technical Proficiencies:
-        - Frontend Development: HTML5, CSS3, JavaScript (ES6+)
-        - React.js Development: Components, Hooks, Context API
-        - State Management: Redux Toolkit, React Query
-        - Backend Familiarity: Node.js, Express.js, MySQL
-        
-        Project Portfolio:
-        
-        Cleaning Service Web Application
-        - Created a responsive interface using React.js and Redux Toolkit
-        - Implemented reusable components and real-time data integration
-        
-        Portfolio Website
-        - Developed a personal portfolio using HTML, CSS, and JavaScript
-        - Integrated Firebase for secure form submissions
-        
-        Khannan Finance Website
-        - Built a professional finance company website with responsive design
-        - Implemented Formspree for reliable contact form functionality
-        
-        Automatic Resume Sender
-        - Engineered an automated email solution using React.js and Node.js/Express.js
-        - Enabled efficient bulk resume distribution through CSV file processing
-        
-        Vote Tracker
-        - Developed a React.js voting application with Firebase integration
-        - Implemented dynamic candidate selection and real-time tracking
-        
-        Chennai Gated Website
-        - Designed a modern real estate platform using React.js
-        - Created intuitive interface for property listings and amenities
-        
-        I welcome the opportunity to discuss how my experience aligns with your team's needs. Please visit my portfolio at naveenak.netlify.app to explore these projects in detail.
-        
-        Best regards,
-        Naveen K
-        Phone: 7548865624
-        Email: ${process.env.EMAIL_USER}
-        Portfolio: ${process.env.PORTFOLIO}
-        `,
+            html: emailHtml, // Use HTML with tracking pixel
+            text: getEmailText(process.env.EMAIL_USER, process.env.PORTFOLIO),
             attachments: [{
                 filename: resumeFilename,
                 path: resumePath,
@@ -341,9 +327,17 @@ exports.sendSingleEmail = (pool, transporter) => async (req, res) => {
             }
         });
         
+        // Get current time for display
+        const timestamp = formatDate(new Date());
+        
         console.log(`✅ Email sent successfully to: ${email}`);
+        console.log(`Timestamp: ${timestamp}`);
         console.log(`Message ID: ${info.messageId}`);
+        console.log(`Tracking ID: ${trackingId}`);
         console.log(`Response: ${JSON.stringify(info.response)}`);
+        
+        // Log successful email
+        await logEmailStatus(pool, email, 'success', `Sent at ${timestamp}`);
         
         // Clean up uploaded file
         fs.unlinkSync(req.file.path);
@@ -351,11 +345,18 @@ exports.sendSingleEmail = (pool, transporter) => async (req, res) => {
         
         res.json({ 
             message: `Email sent successfully to ${email}`,
-            messageId: info.messageId
+            messageId: info.messageId,
+            trackingId: trackingId,
+            timestamp: timestamp
         });
         
     } catch (error) {
         console.error('Send single email error:', error);
+        
+        // Log failed email if email was provided
+        if (req.body && req.body.email) {
+            await logEmailStatus(pool, req.body.email, 'failed', error.message);
+        }
         
         // Clean up uploaded file if it exists
         if (req.file && req.file.path) {
@@ -371,13 +372,20 @@ exports.sendSingleEmail = (pool, transporter) => async (req, res) => {
     }
 };
 
+// Send emails to all recipients
 exports.sendEmails = (pool, transporter) => async (req, res) => {
-    
     try {
         console.log('Environment variables:');
         console.log('EMAIL_USER:', process.env.EMAIL_USER);
         console.log('EMAIL_PASS:', 'HIDDEN FOR SECURITY'); // Don't log the actual password
         console.log('PORTFOLIO:', process.env.PORTFOLIO);
+        
+        // Ensure email log table exists
+        await createEmailLogTable(pool);
+        
+        // Ensure tracking table exists
+        await createTrackingTable(pool);
+        
         if (!req.file) {
             console.log('Error: No resume file uploaded');
             return res.status(400).json({ error: 'No resume file uploaded' });
@@ -396,9 +404,8 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
         const resumePath = req.file.path;
         const resumeFilename = req.file.originalname;
         const senderName = "NAVEEN K";
-        const job = "Frontend Developer";
         
-        console.log(`Resume: ${resumeFilename}, Sender: ${senderName}, Job: ${job}`);
+        console.log(`Resume: ${resumeFilename}, Sender: ${senderName}`);
         
         // Function to delay execution
         const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -406,6 +413,10 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
         let sentCount = 0;
         let failedCount = 0;
         let failedEmails = [];
+        let successfulEmails = [];
+        
+        // Get server URL from environment or use a default
+        const serverUrl = process.env.SERVER_URL || 'http://localhost:3000';
 
         console.log('Starting email sending process...');
         
@@ -414,14 +425,28 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                 console.log(`Attempting to send email to: ${recipientEmail}`);
                 
                 const messageId = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}@naveenak.com`;
+                const trackingId = uuidv4(); // Generate unique tracking ID
+                
+                // Store tracking information
+                await pool.query(
+                    'INSERT INTO email_tracking (tracking_id, email, sent_at) VALUES ($1, $2, CURRENT_TIMESTAMP)',
+                    [trackingId, recipientEmail]
+                );
+                
+                // Create email HTML with tracking pixel
+                const emailHtml = createEmailWithTracker(
+                    senderName, 
+                    process.env.EMAIL_USER, 
+                    process.env.PORTFOLIO,
+                    trackingId,
+                    serverUrl
+                );
                 
                 const info = await transporter.sendMail({
                     from: {
                         name: senderName,
                         address: process.env.EMAIL_USER
                     },
-
-
                     to: recipientEmail,
                     subject: `React.js Frontend Developer with Project Portfolio - NAVEEN K`,
                     messageId: `<${messageId}>`,
@@ -432,163 +457,8 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                         'X-Report-Abuse': `Please report abuse to: ${process.env.EMAIL_USER}`,
                         'Feedback-ID': messageId
                     },
-                    html: `
-                <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 680px; margin: 20px auto; background: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: 1px solid #e8e8e8;">
-                    <div style="background: #2b3d4f; padding: 24px; border-radius: 12px 12px 0 0; text-align: center;">
-                        <h1 style="color: #ffffff; margin: 0; font-size: 22px; letter-spacing: 0.5px;">NAVEEN K</h1>
-                        <p style="color: #a0b3c6; margin: 8px 0 0; font-size: 14px;">Frontend Developer Application</p>
-                    </div>
-                
-                    <div style="padding: 32px 40px;">
-                        <p style="color: #4a5568; margin: 0 0 20px; line-height: 1.6;">Dear Hiring Manager,</p>
-                        
-                        <p style="color: #4a5568; margin: 0 0 20px; line-height: 1.6;">
-                            I trust this message finds you well. I am Naveen, a Frontend Developer with over a year of experience crafting responsive web applications. I am writing to express my interest in contributing to your development team.
-                        </p>
-                
-                        <div style="border-left: 3px solid #2b3d4f; padding-left: 20px; margin: 20px 0;">
-                            <p style="color: #4a5568; margin: 0 0 16px; line-height: 1.6;">
-                                Key Technical Proficiencies:
-                            </p>
-                            <ul style="margin: 0; padding: 0; list-style: none;">
-                                <li style="margin: 8px 0; padding-left: 24px; position: relative; color: #4a5568;">
-                                    <span style="position: absolute; left: 0; color: #2b3d4f;">▹</span>
-                                    Frontend Development: HTML5, CSS3, JavaScript (ES6+)
-                                </li>
-                                <li style="margin: 8px 0; padding-left: 24px; position: relative; color: #4a5568;">
-                                    <span style="position: absolute; left: 0; color: #2b3d4f;">▹</span>
-                                    React.js Development: Components, Hooks, Context API
-                                </li>
-                                <li style="margin: 8px 0; padding-left: 24px; position: relative; color: #4a5568;">
-                                    <span style="position: absolute; left: 0; color: #2b3d4f;">▹</span>
-                                    State Management: Redux Toolkit, React Query
-                                </li>
-                                <li style="margin: 8px 0; padding-left: 24px; position: relative; color: #4a5568;">
-                                    <span style="position: absolute; left: 0; color: #2b3d4f;">▹</span>
-                                    Backend Familiarity: Node.js, Express.js, MySQL
-                                </li>
-                            </ul>
-                        </div>
-                
-                        <div style="margin: 24px 0;">
-                            <p style="color: #4a5568; margin: 0 0 16px; line-height: 1.6;">
-                                Project Portfolio:
-                            </p>
-                            
-                            <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 16px;">
-                                <h3 style="color: #2b3d4f; margin: 0 0 12px;">Cleaning Service Web Application</h3>
-                                <p style="color: #4a5568; margin: 0; line-height: 1.6;">
-                                    Created a responsive interface using React.js and Redux Toolkit, featuring reusable components and seamless API integration for real-time data management.
-                                </p>
-                            </div>
-                
-                            <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 16px;">
-                                <h3 style="color: #2b3d4f; margin: 0 0 12px;">Portfolio Website</h3>
-                                <p style="color: #4a5568; margin: 0; line-height: 1.6;">
-                                    Developed a personal portfolio using HTML, CSS, and JavaScript, integrating Firebase for secure form submissions and enhanced user interaction.
-                                </p>
-                            </div>
-                
-                            <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 16px;">
-                                <h3 style="color: #2b3d4f; margin: 0 0 12px;">Khannan Finance Website</h3>
-                                <p style="color: #4a5568; margin: 0; line-height: 1.6;">
-                                    Built a professional finance company website with responsive design, implementing Formspree for reliable contact form functionality and user engagement.
-                                </p>
-                            </div>
-                
-                            <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 16px;">
-                                <h3 style="color: #2b3d4f; margin: 0 0 12px;">Automatic Resume Sender</h3>
-                                <p style="color: #4a5568; margin: 0; line-height: 1.6;">
-                                    Engineered an automated email solution using React.js frontend and Node.js/Express.js backend with Nodemailer, enabling efficient bulk resume distribution through CSV file processing.
-                                </p>
-                            </div>
-                
-                            <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 16px;">
-                                <h3 style="color: #2b3d4f; margin: 0 0 12px;">Vote Tracker</h3>
-                                <p style="color: #4a5568; margin: 0; line-height: 1.6;">
-                                    Developed a React.js voting application with Firebase integration, featuring dynamic candidate selection by state and district, single-vote verification, and real-time top candidate tracking.
-                                </p>
-                            </div>
-                
-                            <div style="background: #f8fafc; padding: 20px; border-radius: 8px;">
-                                <h3 style="color: #2b3d4f; margin: 0 0 12px;">Chennai Gated Website</h3>
-                                <p style="color: #4a5568; margin: 0; line-height: 1.6;">
-                                    Designed and implemented a modern real estate platform using React.js, featuring an intuitive interface for property listings and comprehensive amenity showcases.
-                                </p>
-                            </div>
-                        </div>
-                
-                        <p style="color: #4a5568; margin: 20px 0; line-height: 1.6;">
-                            I welcome the opportunity to discuss how my experience aligns with your team's needs. Please visit my portfolio at naveenak.netlify.app to explore these projects in detail.
-                        </p>
-                
-                        <div style="margin-top: 32px; border-top: 1px solid #e8e8e8; padding-top: 24px;">
-                            <p style="margin: 0 0 8px; color: #4a5568;">
-                                Best regards,<br>
-                                <strong style="color: #2b3d4f;">Naveen K</strong>
-                            </p>
-                            <div style="margin-top: 12px;">
-                                <p style="color: #4a5568; margin: 4px 0; font-size: 14px;">📞 7548865624</p>
-                                <a href="mailto:${process.env.EMAIL_USER}" style="color: #3182ce; text-decoration: none; font-size: 14px; display: block; margin: 4px 0;">📧 Email</a>
-                                <a href="${process.env.PORTFOLIO}" style="color: #3182ce; text-decoration: none; font-size: 14px; display: block; margin: 4px 0;">🌐 Portfolio</a>
-                            </div>
-                        </div>
-                    </div>
-                
-                    <div style="background: #f8f9fa; padding: 20px; text-align: center; border-radius: 0 0 12px 12px;">
-                        <p style="color: #718096; font-size: 12px; margin: 8px 0;">
-                            To opt out of future communications, please reply with "unsubscribe"
-                        </p>
-                    </div>
-                </div>
-                `,
-                    text: `
-                React.js Frontend Developer with Project Portfolio
-                
-                Dear Hiring Manager,
-                
-                I trust this message finds you well. I am Naveen, a Frontend Developer with over a year of experience crafting responsive web applications. I am writing to express my interest in contributing to your development team.
-                
-                Key Technical Proficiencies:
-                - Frontend Development: HTML5, CSS3, JavaScript (ES6+)
-                - React.js Development: Components, Hooks, Context API
-                - State Management: Redux Toolkit, React Query
-                - Backend Familiarity: Node.js, Express.js, MySQL
-                
-                Project Portfolio:
-                
-                Cleaning Service Web Application
-                - Created a responsive interface using React.js and Redux Toolkit
-                - Implemented reusable components and real-time data integration
-                
-                Portfolio Website
-                - Developed a personal portfolio using HTML, CSS, and JavaScript
-                - Integrated Firebase for secure form submissions
-                
-                Khannan Finance Website
-                - Built a professional finance company website with responsive design
-                - Implemented Formspree for reliable contact form functionality
-                
-                Automatic Resume Sender
-                - Engineered an automated email solution using React.js and Node.js/Express.js
-                - Enabled efficient bulk resume distribution through CSV file processing
-                
-                Vote Tracker
-                - Developed a React.js voting application with Firebase integration
-                - Implemented dynamic candidate selection and real-time tracking
-                
-                Chennai Gated Website
-                - Designed a modern real estate platform using React.js
-                - Created intuitive interface for property listings and amenities
-                
-                I welcome the opportunity to discuss how my experience aligns with your team's needs. Please visit my portfolio at naveenak.netlify.app to explore these projects in detail.
-                
-                Best regards,
-                Naveen K
-                Phone: 7548865624
-                Email: ${process.env.EMAIL_USER}
-                Portfolio: ${process.env.PORTFOLIO}
-                `,
+                    html: emailHtml, // Use HTML with tracking pixel
+                    text: getEmailText(process.env.EMAIL_USER, process.env.PORTFOLIO),
                     attachments: [{
                         filename: resumeFilename,
                         path: resumePath,
@@ -602,24 +472,42 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                     }
                 });
                 
+                // Get current time for display
+                const timestamp = formatDate(new Date());
+                
                 console.log(`✅ Email sent successfully to: ${recipientEmail}`);
+                console.log(`Timestamp: ${timestamp}`);
                 console.log(`Message ID: ${info.messageId}`);
+                console.log(`Tracking ID: ${trackingId}`);
                 console.log(`Response: ${JSON.stringify(info.response)}`);
                 
-                sentCount++;
+                // Log successful email
+                await logEmailStatus(pool, recipientEmail, 'success', `Sent at ${timestamp}`);
                 
-                // Add 30-second delay between emails
+                sentCount++;
+                successfulEmails.push({
+                    email: recipientEmail,
+                    timestamp: timestamp,
+                    trackingId: trackingId
+                });
+                
+                // Add 90-second delay between emails
                 if (sentCount < emails.length) {
-                    console.log(`Waiting 30 seconds before sending next email... (${sentCount}/${emails.length} completed)`);
-                    await delay(90000); // 30 seconds in milliseconds
+                    console.log(`Waiting 90 seconds before sending next email... (${sentCount}/${emails.length} completed)`);
+                    await delay(90000); // 90 seconds in milliseconds
                 }
                 
             } catch (emailError) {
                 console.error(`❌ Failed to send email to ${recipientEmail}:`, emailError);
+                
+                // Log failed email
+                await logEmailStatus(pool, recipientEmail, 'failed', emailError.message);
+                
                 failedCount++;
                 failedEmails.push({
                     email: recipientEmail,
-                    error: emailError.message
+                    error: emailError.message,
+                    timestamp: formatDate(new Date())
                 });
             }
         }
@@ -632,7 +520,7 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
         if (failedCount > 0) {
             console.log('\nFailed email addresses:');
             failedEmails.forEach((item, index) => {
-                console.log(`${index + 1}. ${item.email} - Error: ${item.error}`);
+                console.log(`${index + 1}. ${item.email} - Error: ${item.error} - Time: ${item.timestamp}`);
             });
         }
 
@@ -640,10 +528,12 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
         console.log(`Deleted temporary resume file: ${req.file.path}`);
         
         res.json({ 
-            message: 'Emails sent successfully with 30-second intervals',
+            message: 'Emails sent successfully with 90-second intervals',
             sentCount: sentCount,
             failedCount: failedCount,
-            totalTime: `${(emails.length - 1) * 30} seconds`
+            successfulEmails: successfulEmails,
+            failedEmails: failedEmails,
+            totalTime: `${(emails.length - 1) * 90} seconds`
         });
     } catch (error) {
         console.error('Send emails error:', error);
@@ -651,13 +541,90 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
     }
 };
 
-
-
+// Get data
 exports.getData = (pool) => async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM csv_data');
         res.json(result.rows);
     } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// Get email logs
+exports.getEmailLogs = (pool) => async (req, res) => {
+    try {
+        // Ensure email log table exists
+        await createEmailLogTable(pool);
+        
+        const result = await pool.query('SELECT * FROM email_logs ORDER BY sent_at DESC');
+        
+        // Format timestamps for frontend display
+        const formattedLogs = result.rows.map(log => ({
+            ...log,
+            formattedTime: formatDate(new Date(log.sent_at))
+        }));
+        
+        res.json(formattedLogs);
+    } catch (error) {
+        console.error('Error fetching email logs:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// Clear email logs
+exports.clearEmailLogs = (pool) => async (req, res) => {
+    try {
+        await pool.query('DELETE FROM email_logs');
+        res.json({ message: 'Email logs cleared successfully' });
+    } catch (error) {
+        console.error('Error clearing email logs:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// Get email tracking data
+exports.getEmailTrackingData = (pool) => async (req, res) => {
+    try {
+        // Ensure tracking table exists
+        await createTrackingTable(pool);
+        
+        const result = await pool.query(`
+            SELECT 
+                id, 
+                tracking_id, 
+                email, 
+                sent_at, 
+                opened_at, 
+                open_count,
+                CASE WHEN opened_at IS NOT NULL THEN TRUE ELSE FALSE END AS is_opened
+            FROM 
+                email_tracking 
+            ORDER BY 
+                sent_at DESC
+        `);
+        
+        // Format timestamps for frontend display
+        const formattedTracking = result.rows.map(record => ({
+            ...record,
+            formattedSentTime: formatDate(new Date(record.sent_at)),
+            formattedOpenTime: record.opened_at ? formatDate(new Date(record.opened_at)) : null
+        }));
+        
+        res.json(formattedTracking);
+    } catch (error) {
+        console.error('Error fetching email tracking data:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// Clear email tracking data
+exports.clearEmailTrackingData = (pool) => async (req, res) => {
+    try {
+        await pool.query('DELETE FROM email_tracking');
+        res.json({ message: 'Email tracking data cleared successfully' });
+    } catch (error) {
+        console.error('Error clearing email tracking data:', error);
         res.status(500).json({ error: error.message });
     }
 };
