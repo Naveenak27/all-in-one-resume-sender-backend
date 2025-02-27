@@ -68,13 +68,9 @@ if (!fs.existsSync('./uploads')) {
 // Routes
 app.delete('/api/delete/:id', controller.deleteRecord(pool));
 // Email tracking endpoint
-app.get('/api/track/:trackingId', controller.trackEmailOpen(pool));
-
 // Get email tracking data
-app.get('/api/tracking', controller.getEmailTrackingData(pool));
 
 // Clear email tracking data
-app.delete('/api/tracking', controller.clearEmailTrackingData(pool));
 app.delete('/api/delete-all', controller.deleteAllRecords(pool));
 app.get('/api/health', controller.healthCheck);
 app.post('/api/add-email', controller.addEmail(pool));

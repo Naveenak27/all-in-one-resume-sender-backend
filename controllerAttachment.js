@@ -1,27 +1,7 @@
 const csv = require('csv-parser');
 const fs = require('fs');
 const xlsx = require('xlsx');
-const { v4: uuidv4 } = require('uuid'); // Add this dependency for generating unique IDs
 const { getEmailHtml, getEmailText } = require('./emailTemplate');
-
-// Create tracking table if it doesn't exist
-const createTrackingTable = async (pool) => {
-    try {
-        const createTableQuery = `
-            CREATE TABLE IF NOT EXISTS email_tracking (
-                id SERIAL PRIMARY KEY,
-                tracking_id TEXT UNIQUE NOT NULL,
-                email TEXT NOT NULL,
-                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                opened_at TIMESTAMP,
-                open_count INT DEFAULT 0
-            )
-        `;
-        await pool.query(createTableQuery);
-    } catch (error) {
-        console.error('Error creating tracking table:', error);
-    }
-};
 
 // Health check
 exports.healthCheck = (req, res) => {
@@ -196,62 +176,6 @@ exports.uploadFile = (pool) => async (req, res) => {
     }
 };
 
-// Create a modified email HTML with tracking pixel
-const createEmailWithTracker = (senderName, senderEmail, portfolioUrl, trackingId, serverUrl) => {
-    // Get the original email HTML
-    const originalHtml = getEmailHtml(senderName, senderEmail, portfolioUrl);
-    
-    // Add tracking pixel at the end of the email body
-    const trackingPixel = `<img src="${serverUrl}/api/track/${trackingId}" width="1" height="1" alt="" style="display:none;">`;
-    
-    // Insert tracking pixel just before the closing body tag
-    return originalHtml.replace('</body>', `${trackingPixel}</body>`);
-};
-
-
-
-
-// Email tracking endpoint
-exports.trackEmailOpen = (pool) => async (req, res) => {
-    const { trackingId } = req.params;
-    
-    try {
-        // First update the tracking record
-        const updateResult = await pool.query(`
-            UPDATE email_tracking 
-            SET 
-                opened_at = COALESCE(opened_at, CURRENT_TIMESTAMP),
-                open_count = open_count + 1,
-                is_opened = true
-            WHERE tracking_id = $1
-            RETURNING *
-        `, [trackingId]);
-
-        // Log successful tracking
-        if (updateResult.rows[0]) {
-            console.log(`Email tracked: ${updateResult.rows[0].email}`);
-        }
-
-        // Send tracking pixel
-        const pixel = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
-        res.writeHead(200, {
-            'Content-Type': 'image/gif',
-            'Content-Length': pixel.length,
-            'Cache-Control': 'private, no-cache, no-store, must-revalidate',
-            'Expires': '0',
-            'Pragma': 'no-cache'
-        });
-        res.end(pixel);
-
-    } catch (error) {
-        console.error('Tracking error:', error);
-        // Still send pixel even if tracking fails
-        const pixel = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
-        res.writeHead(200, {'Content-Type': 'image/gif'});
-        res.end(pixel);
-    }
-};
-
 // Send single email
 exports.sendSingleEmail = (pool, transporter) => async (req, res) => {
     try {
@@ -263,9 +187,6 @@ exports.sendSingleEmail = (pool, transporter) => async (req, res) => {
         
         // Ensure email log table exists
         await createEmailLogTable(pool);
-        
-        // Ensure tracking table exists
-        await createTrackingTable(pool);
 
         if (!req.file) {
             console.log('Error: No resume file uploaded');
@@ -288,25 +209,6 @@ exports.sendSingleEmail = (pool, transporter) => async (req, res) => {
         console.log(`Resume: ${resumeFilename}, Sender: ${senderName}`);
         
         const messageId = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}@naveenak.com`;
-        const trackingId = uuidv4(); // Generate unique tracking ID
-        
-        // Get server URL from environment or use a default
-        const serverUrl = process.env.SERVER_URL || 'http://localhost:3000';
-        
-        // Store tracking information
-        await pool.query(
-            'INSERT INTO email_tracking (tracking_id, email, sent_at) VALUES ($1, $2, CURRENT_TIMESTAMP)',
-            [trackingId, email]
-        );
-        
-        // Create email HTML with tracking pixel
-        const emailHtml = createEmailWithTracker(
-            senderName, 
-            process.env.EMAIL_USER, 
-            process.env.PORTFOLIO,
-            trackingId,
-            serverUrl
-        );
         
         const info = await transporter.sendMail({
             from: {
@@ -323,7 +225,7 @@ exports.sendSingleEmail = (pool, transporter) => async (req, res) => {
                 'X-Report-Abuse': `Please report abuse to: ${process.env.EMAIL_USER}`,
                 'Feedback-ID': messageId
             },
-            html: emailHtml, // Use HTML with tracking pixel
+            html: getEmailHtml(senderName, process.env.EMAIL_USER, process.env.PORTFOLIO),
             text: getEmailText(process.env.EMAIL_USER, process.env.PORTFOLIO),
             attachments: [{
                 filename: resumeFilename,
@@ -344,7 +246,6 @@ exports.sendSingleEmail = (pool, transporter) => async (req, res) => {
         console.log(`✅ Email sent successfully to: ${email}`);
         console.log(`Timestamp: ${timestamp}`);
         console.log(`Message ID: ${info.messageId}`);
-        console.log(`Tracking ID: ${trackingId}`);
         console.log(`Response: ${JSON.stringify(info.response)}`);
         
         // Log successful email
@@ -357,7 +258,6 @@ exports.sendSingleEmail = (pool, transporter) => async (req, res) => {
         res.json({ 
             message: `Email sent successfully to ${email}`,
             messageId: info.messageId,
-            trackingId: trackingId,
             timestamp: timestamp
         });
         
@@ -394,9 +294,6 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
         // Ensure email log table exists
         await createEmailLogTable(pool);
         
-        // Ensure tracking table exists
-        await createTrackingTable(pool);
-        
         if (!req.file) {
             console.log('Error: No resume file uploaded');
             return res.status(400).json({ error: 'No resume file uploaded' });
@@ -425,9 +322,6 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
         let failedCount = 0;
         let failedEmails = [];
         let successfulEmails = [];
-        
-        // Get server URL from environment or use a default
-        const serverUrl = process.env.SERVER_URL || 'http://localhost:3000';
 
         console.log('Starting email sending process...');
         
@@ -436,22 +330,6 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                 console.log(`Attempting to send email to: ${recipientEmail}`);
                 
                 const messageId = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}@naveenak.com`;
-                const trackingId = uuidv4(); // Generate unique tracking ID
-                
-                // Store tracking information
-                await pool.query(
-                    'INSERT INTO email_tracking (tracking_id, email, sent_at) VALUES ($1, $2, CURRENT_TIMESTAMP)',
-                    [trackingId, recipientEmail]
-                );
-                
-                // Create email HTML with tracking pixel
-                const emailHtml = createEmailWithTracker(
-                    senderName, 
-                    process.env.EMAIL_USER, 
-                    process.env.PORTFOLIO,
-                    trackingId,
-                    serverUrl
-                );
                 
                 const info = await transporter.sendMail({
                     from: {
@@ -468,7 +346,7 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                         'X-Report-Abuse': `Please report abuse to: ${process.env.EMAIL_USER}`,
                         'Feedback-ID': messageId
                     },
-                    html: emailHtml, // Use HTML with tracking pixel
+                    html: getEmailHtml(senderName, process.env.EMAIL_USER, process.env.PORTFOLIO),
                     text: getEmailText(process.env.EMAIL_USER, process.env.PORTFOLIO),
                     attachments: [{
                         filename: resumeFilename,
@@ -489,7 +367,6 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                 console.log(`✅ Email sent successfully to: ${recipientEmail}`);
                 console.log(`Timestamp: ${timestamp}`);
                 console.log(`Message ID: ${info.messageId}`);
-                console.log(`Tracking ID: ${trackingId}`);
                 console.log(`Response: ${JSON.stringify(info.response)}`);
                 
                 // Log successful email
@@ -498,8 +375,7 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                 sentCount++;
                 successfulEmails.push({
                     email: recipientEmail,
-                    timestamp: timestamp,
-                    trackingId: trackingId
+                    timestamp: timestamp
                 });
                 
                 // Add 90-second delay between emails
@@ -590,52 +466,6 @@ exports.clearEmailLogs = (pool) => async (req, res) => {
         res.json({ message: 'Email logs cleared successfully' });
     } catch (error) {
         console.error('Error clearing email logs:', error);
-        res.status(500).json({ error: error.message });
-    }
-};
-
-// Get email tracking data
-exports.getEmailTrackingData = (pool) => async (req, res) => {
-    try {
-        // Ensure tracking table exists
-        await createTrackingTable(pool);
-        
-        const result = await pool.query(`
-            SELECT 
-                id, 
-                tracking_id, 
-                email, 
-                sent_at, 
-                opened_at, 
-                open_count,
-                CASE WHEN opened_at IS NOT NULL THEN TRUE ELSE FALSE END AS is_opened
-            FROM 
-                email_tracking 
-            ORDER BY 
-                sent_at DESC
-        `);
-        
-        // Format timestamps for frontend display
-        const formattedTracking = result.rows.map(record => ({
-            ...record,
-            formattedSentTime: formatDate(new Date(record.sent_at)),
-            formattedOpenTime: record.opened_at ? formatDate(new Date(record.opened_at)) : null
-        }));
-        
-        res.json(formattedTracking);
-    } catch (error) {
-        console.error('Error fetching email tracking data:', error);
-        res.status(500).json({ error: error.message });
-    }
-};
-
-// Clear email tracking data
-exports.clearEmailTrackingData = (pool) => async (req, res) => {
-    try {
-        await pool.query('DELETE FROM email_tracking');
-        res.json({ message: 'Email tracking data cleared successfully' });
-    } catch (error) {
-        console.error('Error clearing email tracking data:', error);
         res.status(500).json({ error: error.message });
     }
 };
