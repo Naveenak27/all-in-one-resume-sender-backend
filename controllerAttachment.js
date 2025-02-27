@@ -469,3 +469,129 @@ exports.clearEmailLogs = (pool) => async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+// Send email with custom content
+exports.sendCustomEmail = (pool, transporter) => async (req, res) => {
+    try {
+        console.log('Sending email with custom content...');
+        console.log('Environment variables:');
+        console.log('EMAIL_USER:', process.env.EMAIL_USER);
+        console.log('EMAIL_PASS:', 'HIDDEN FOR SECURITY');
+        
+        // Ensure email log table exists
+        await createEmailLogTable(pool);
+
+        if (!req.file) {
+            console.log('Error: No resume file uploaded');
+            return res.status(400).json({ error: 'No resume file uploaded' });
+        }
+
+        const { email, customContent, useDefaultTemplate } = req.body;
+        
+        if (!email) {
+            console.log('Error: No recipient email provided');
+            return res.status(400).json({ error: 'No recipient email provided' });
+        }
+        
+        console.log(`Attempting to send email to: ${email}`);
+        console.log(`Using default template: ${useDefaultTemplate ? 'Yes' : 'No'}`);
+        
+        const resumePath = req.file.path;
+        const resumeFilename = req.file.originalname;
+        const senderName = "NAVEEN K";
+        
+        console.log(`Resume: ${resumeFilename}, Sender: ${senderName}`);
+        
+        const messageId = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}@naveenak.com`;
+        
+        // Determine email content based on template choice
+        let emailHtml, emailText;
+        
+        if (useDefaultTemplate === 'true') {
+            // Use default template
+            emailHtml = getEmailHtml(senderName, process.env.EMAIL_USER, process.env.PORTFOLIO);
+            emailText = getEmailText(process.env.EMAIL_USER, process.env.PORTFOLIO);
+        } else {
+            // Use custom text content only
+            // Replace placeholders with actual values
+            emailText = customContent
+                .replace('${emailUser}', process.env.EMAIL_USER)
+                .replace('${portfolio}', process.env.PORTFOLIO);
+                
+            // Create a very simple HTML version just for clients that require HTML
+            // but keep it essentially the same as the plain text
+            emailHtml = `<pre style="font-family: sans-serif; white-space: pre-wrap;">${emailText}</pre>`;
+        }
+        
+        const info = await transporter.sendMail({
+            from: {
+                name: senderName,
+                address: process.env.EMAIL_USER
+            },
+            to: email,
+            subject: `React.js Frontend Developer - NAVEEN K`,
+            messageId: `<${messageId}>`,
+            headers: {
+                'List-Unsubscribe': `<mailto:${process.env.EMAIL_USER}?subject=unsubscribe>`,
+                'Precedence': 'Bulk',
+                'X-Auto-Response-Suppress': 'OOF, AutoReply',
+                'X-Report-Abuse': `Please report abuse to: ${process.env.EMAIL_USER}`,
+                'Feedback-ID': messageId
+            },
+            html: emailHtml,
+            text: emailText,
+            attachments: [{
+                filename: resumeFilename,
+                path: resumePath,
+                contentType: 'application/pdf'
+            }],
+            dsn: {
+                id: messageId,
+                return: 'headers',
+                notify: ['failure', 'delay'],
+                recipient: process.env.EMAIL_USER
+            }
+        });
+        
+        // Get current time for display
+        const timestamp = formatDate(new Date());
+        
+        console.log(`✅ Email sent successfully to: ${email}`);
+        console.log(`Timestamp: ${timestamp}`);
+        console.log(`Message ID: ${info.messageId}`);
+        console.log(`Response: ${JSON.stringify(info.response)}`);
+        
+        // Log successful email
+        await logEmailStatus(pool, email, 'success', `Sent at ${timestamp} - Custom content: ${useDefaultTemplate === 'true' ? 'No' : 'Yes'}`);
+        
+        // Clean up uploaded file
+        fs.unlinkSync(req.file.path);
+        console.log(`Deleted temporary resume file: ${req.file.path}`);
+        
+        res.json({ 
+            message: `Email sent successfully to ${email}`,
+            messageId: info.messageId,
+            timestamp: timestamp,
+            useDefaultTemplate: useDefaultTemplate === 'true'
+        });
+        
+    } catch (error) {
+        console.error('Send custom email error:', error);
+        
+        // Log failed email if email was provided
+        if (req.body && req.body.email) {
+            await logEmailStatus(pool, req.body.email, 'failed', error.message);
+        }
+        
+        // Clean up uploaded file if it exists
+        if (req.file && req.file.path) {
+            try {
+                fs.unlinkSync(req.file.path);
+                console.log(`Deleted temporary resume file after error: ${req.file.path}`);
+            } catch (unlinkError) {
+                console.error('Error deleting file:', unlinkError);
+            }
+        }
+        
+        res.status(500).json({ error: error.message });
+    }
+};
