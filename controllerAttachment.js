@@ -47,25 +47,61 @@ exports.addEmail = (pool) => async (req, res) => {
 };
 
 // Create email log table if it doesn't exist
+// Create email log table if it doesn't exist
 const createEmailLogTable = async (pool) => {
     try {
-        const createTableQuery = `
-            CREATE TABLE IF NOT EXISTS email_logs (
-                id SERIAL PRIMARY KEY,
-                email TEXT NOT NULL,
-                status TEXT NOT NULL,
-                message TEXT,
-                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                message_id TEXT,
-                send_attempt_id TEXT UNIQUE
-            )
+        // First check if the table exists
+        const checkTableQuery = `
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'email_logs'
+            );
         `;
-        await pool.query(createTableQuery);
+        const tableExists = await pool.query(checkTableQuery);
+        
+        if (tableExists.rows[0].exists) {
+            // Check if columns need to be added
+            const checkColumnsQuery = `
+                SELECT 
+                    column_name 
+                FROM 
+                    information_schema.columns 
+                WHERE 
+                    table_name = 'email_logs';
+            `;
+            const columns = await pool.query(checkColumnsQuery);
+            const columnNames = columns.rows.map(row => row.column_name);
+            
+            // Add missing columns if needed
+            if (!columnNames.includes('message_id')) {
+                await pool.query('ALTER TABLE email_logs ADD COLUMN message_id TEXT;');
+                console.log('Added message_id column to email_logs table');
+            }
+            
+            if (!columnNames.includes('send_attempt_id')) {
+                await pool.query('ALTER TABLE email_logs ADD COLUMN send_attempt_id TEXT UNIQUE;');
+                console.log('Added send_attempt_id column to email_logs table');
+            }
+        } else {
+            // Create the table with all required columns
+            const createTableQuery = `
+                CREATE TABLE IF NOT EXISTS email_logs (
+                    id SERIAL PRIMARY KEY,
+                    email TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    message TEXT,
+                    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    message_id TEXT,
+                    send_attempt_id TEXT UNIQUE
+                )
+            `;
+            await pool.query(createTableQuery);
+            console.log('Created email_logs table with all required columns');
+        }
     } catch (error) {
-        console.error('Error creating email log table:', error);
+        console.error('Error managing email log table:', error);
     }
 };
-
 // Log email sending status
 const logEmailStatus = async (pool, email, status, message = null, messageId = null, sendAttemptId = null) => {
     try {
