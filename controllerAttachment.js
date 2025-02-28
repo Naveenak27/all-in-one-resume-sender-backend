@@ -47,99 +47,87 @@ exports.addEmail = (pool) => async (req, res) => {
 };
 
 // Create email log table if it doesn't exist
-// Create email log table if it doesn't exist
 const createEmailLogTable = async (pool) => {
     try {
-        // First check if the table exists
-        const checkTableQuery = `
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_name = 'email_logs'
-            );
+        const createTableQuery = `
+            CREATE TABLE IF NOT EXISTS email_logs (
+                id SERIAL PRIMARY KEY,
+                email TEXT NOT NULL,
+                status TEXT NOT NULL,
+                message TEXT,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
         `;
-        const tableExists = await pool.query(checkTableQuery);
-        
-        if (tableExists.rows[0].exists) {
-            // Check if columns need to be added
-            const checkColumnsQuery = `
-                SELECT 
-                    column_name 
-                FROM 
-                    information_schema.columns 
-                WHERE 
-                    table_name = 'email_logs';
-            `;
-            const columns = await pool.query(checkColumnsQuery);
-            const columnNames = columns.rows.map(row => row.column_name);
-            
-            // Add missing columns if needed
-            if (!columnNames.includes('message_id')) {
-                await pool.query('ALTER TABLE email_logs ADD COLUMN message_id TEXT;');
-                console.log('Added message_id column to email_logs table');
-            }
-            
-            if (!columnNames.includes('send_attempt_id')) {
-                await pool.query('ALTER TABLE email_logs ADD COLUMN send_attempt_id TEXT UNIQUE;');
-                console.log('Added send_attempt_id column to email_logs table');
-            }
-        } else {
-            // Create the table with all required columns
-            const createTableQuery = `
-                CREATE TABLE IF NOT EXISTS email_logs (
-                    id SERIAL PRIMARY KEY,
-                    email TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    message TEXT,
-                    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    message_id TEXT,
-                    send_attempt_id TEXT UNIQUE
-                )
-            `;
-            await pool.query(createTableQuery);
-            console.log('Created email_logs table with all required columns');
-        }
+        await pool.query(createTableQuery);
     } catch (error) {
-        console.error('Error managing email log table:', error);
+        console.error('Error creating email log table:', error);
     }
 };
-// Log email sending status
-const logEmailStatus = async (pool, email, status, message = null, messageId = null, sendAttemptId = null) => {
+
+// Create sent email tracking table
+const createSentEmailTrackingTable = async (pool) => {
+    try {
+        const createTableQuery = `
+            CREATE TABLE IF NOT EXISTS sent_email_tracking (
+                email TEXT PRIMARY KEY,
+                last_sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `;
+        await pool.query(createTableQuery);
+        console.log('Sent email tracking table created or verified');
+    } catch (error) {
+        console.error('Error creating sent email tracking table:', error);
+    }
+};
+
+// Check if email was recently sent (within 24 hours)
+const wasEmailRecentlySent = async (pool, email) => {
+    try {
+        // Look up the last time this email was sent
+        const result = await pool.query(
+            'SELECT last_sent_at FROM sent_email_tracking WHERE email = $1',
+            [email]
+        );
+        
+        if (result.rows.length === 0) {
+            return false; // Email has never been sent before
+        }
+        
+        const lastSentAt = new Date(result.rows[0].last_sent_at);
+        const now = new Date();
+        const hoursSinceLastSent = (now - lastSentAt) / (1000 * 60 * 60);
+        
+        // Return true if email was sent in the last 24 hours
+        return hoursSinceLastSent < 24;
+    } catch (error) {
+        console.error('Error checking if email was recently sent:', error);
+        return false; // If there's an error, allow sending to be safe
+    }
+};
+
+// Update the last sent time for an email
+const updateEmailSentTracking = async (pool, email) => {
     try {
         await pool.query(
-            'INSERT INTO email_logs (email, status, message, message_id, send_attempt_id) VALUES ($1, $2, $3, $4, $5)',
-            [email, status, message, messageId, sendAttemptId]
+            `INSERT INTO sent_email_tracking (email, last_sent_at) 
+             VALUES ($1, CURRENT_TIMESTAMP) 
+             ON CONFLICT (email) DO UPDATE SET last_sent_at = CURRENT_TIMESTAMP`,
+            [email]
+        );
+    } catch (error) {
+        console.error('Error updating email sent tracking:', error);
+    }
+};
+
+// Log email sending status
+const logEmailStatus = async (pool, email, status, message = null) => {
+    try {
+        await pool.query(
+            'INSERT INTO email_logs (email, status, message) VALUES ($1, $2, $3)',
+            [email, status, message]
         );
     } catch (error) {
         console.error('Error logging email status:', error);
-    }
-};
-
-// Check if an email has already been sent successfully within the last hour
-const checkRecentlySent = async (pool, email) => {
-    try {
-        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-        const result = await pool.query(
-            'SELECT id FROM email_logs WHERE email = $1 AND status = $2 AND sent_at > $3',
-            [email, 'success', oneHourAgo]
-        );
-        return result.rows.length > 0;
-    } catch (error) {
-        console.error('Error checking recently sent emails:', error);
-        return false; // Fail open - assume not sent in case of error
-    }
-};
-
-// Check if this specific send attempt has already been processed
-const checkSendAttempt = async (pool, sendAttemptId) => {
-    try {
-        const result = await pool.query(
-            'SELECT id FROM email_logs WHERE send_attempt_id = $1',
-            [sendAttemptId]
-        );
-        return result.rows.length > 0;
-    } catch (error) {
-        console.error('Error checking send attempt:', error);
-        return false; // Fail open - assume not sent in case of error
     }
 };
 
@@ -179,6 +167,8 @@ exports.uploadFile = (pool) => async (req, res) => {
         
         // Ensure email log table exists
         await createEmailLogTable(pool);
+        // Ensure sent email tracking table exists
+        await createSentEmailTrackingTable(pool);
 
         const results = [];
         let headers = [];
@@ -243,9 +233,8 @@ exports.uploadFile = (pool) => async (req, res) => {
     }
 };
 
-// Send single email with idempotency controls
+// Send single email
 exports.sendSingleEmail = (pool, transporter) => async (req, res) => {
-    let resumePath = null;
     try {
         console.log('Sending single email...');
         console.log('Environment variables:');
@@ -255,6 +244,8 @@ exports.sendSingleEmail = (pool, transporter) => async (req, res) => {
         
         // Ensure email log table exists
         await createEmailLogTable(pool);
+        // Ensure sent email tracking table exists
+        await createSentEmailTrackingTable(pool);
 
         if (!req.file) {
             console.log('Error: No resume file uploaded');
@@ -268,37 +259,23 @@ exports.sendSingleEmail = (pool, transporter) => async (req, res) => {
             return res.status(400).json({ error: 'No recipient email provided' });
         }
         
+        // Check if this email was recently sent to
+        const recentlySent = await wasEmailRecentlySent(pool, email);
+        if (recentlySent) {
+            console.log(`Email to ${email} was recently sent (within 24 hours). Skipping.`);
+            return res.status(400).json({ 
+                error: 'Email was recently sent',
+                message: 'This email was already sent within the last 24 hours.'
+            });
+        }
+        
         console.log(`Attempting to send email to: ${email}`);
         
-        resumePath = req.file.path;
+        const resumePath = req.file.path;
         const resumeFilename = req.file.originalname;
         const senderName = "NAVEEN K";
         
         console.log(`Resume: ${resumeFilename}, Sender: ${senderName}`);
-        
-        // Create a unique send attempt ID
-        const sendAttemptId = `${email}-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
-        
-        // Check if this specific send attempt has already been processed
-        const alreadyProcessed = await checkSendAttempt(pool, sendAttemptId);
-        if (alreadyProcessed) {
-            console.log(`Send attempt ${sendAttemptId} has already been processed`);
-            return res.json({ 
-                message: `Email to ${email} already processed`,
-                idempotent: true
-            });
-        }
-        
-        // Check if this email has been sent successfully in the last hour
-        const recentlySent = await checkRecentlySent(pool, email);
-        if (recentlySent) {
-            console.log(`Email to ${email} was recently sent, skipping`);
-            await logEmailStatus(pool, email, 'skipped', 'Email was sent recently', null, sendAttemptId);
-            return res.json({ 
-                message: `Email to ${email} was sent recently, skipping to prevent duplicate`,
-                idempotent: true
-            });
-        }
         
         const messageId = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}@naveenak.com`;
         
@@ -340,12 +317,14 @@ exports.sendSingleEmail = (pool, transporter) => async (req, res) => {
         console.log(`Message ID: ${info.messageId}`);
         console.log(`Response: ${JSON.stringify(info.response)}`);
         
-        // Log successful email with the message ID and send attempt ID
-        await logEmailStatus(pool, email, 'success', `Sent at ${timestamp}`, info.messageId, sendAttemptId);
+        // Log successful email
+        await logEmailStatus(pool, email, 'success', `Sent at ${timestamp}`);
+        
+        // Update the last sent time for this email
+        await updateEmailSentTracking(pool, email);
         
         // Clean up uploaded file
-        fs.unlinkSync(resumePath);
-        resumePath = null;
+        fs.unlinkSync(req.file.path);
         console.log(`Deleted temporary resume file: ${req.file.path}`);
         
         res.json({ 
@@ -357,21 +336,16 @@ exports.sendSingleEmail = (pool, transporter) => async (req, res) => {
     } catch (error) {
         console.error('Send single email error:', error);
         
-        // Create a send attempt ID for error logging if needed
-        const sendAttemptId = req.body && req.body.email ? 
-            `${req.body.email}-${Date.now()}-${Math.random().toString(36).substring(2, 10)}` : 
-            `unknown-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
-        
         // Log failed email if email was provided
         if (req.body && req.body.email) {
-            await logEmailStatus(pool, req.body.email, 'failed', error.message, null, sendAttemptId);
+            await logEmailStatus(pool, req.body.email, 'failed', error.message);
         }
         
         // Clean up uploaded file if it exists
-        if (resumePath) {
+        if (req.file && req.file.path) {
             try {
-                fs.unlinkSync(resumePath);
-                console.log(`Deleted temporary resume file after error: ${resumePath}`);
+                fs.unlinkSync(req.file.path);
+                console.log(`Deleted temporary resume file after error: ${req.file.path}`);
             } catch (unlinkError) {
                 console.error('Error deleting file:', unlinkError);
             }
@@ -381,9 +355,8 @@ exports.sendSingleEmail = (pool, transporter) => async (req, res) => {
     }
 };
 
-// Send emails to all recipients with idempotency controls
+// Send emails to all recipients
 exports.sendEmails = (pool, transporter) => async (req, res) => {
-    let resumePath = null;
     try {
         console.log('Environment variables:');
         console.log('EMAIL_USER:', process.env.EMAIL_USER);
@@ -392,6 +365,8 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
         
         // Ensure email log table exists
         await createEmailLogTable(pool);
+        // Ensure sent email tracking table exists
+        await createSentEmailTrackingTable(pool);
         
         if (!req.file) {
             console.log('Error: No resume file uploaded');
@@ -408,68 +383,40 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
             return res.status(400).json({ error: 'No email recipients found' });
         }
 
-        resumePath = req.file.path;
+        const resumePath = req.file.path;
         const resumeFilename = req.file.originalname;
         const senderName = "NAVEEN K";
         
         console.log(`Resume: ${resumeFilename}, Sender: ${senderName}`);
         
-        // Generate a batch ID for this entire send operation
-        const batchId = `batch-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
-        
         // Function to delay execution
         const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
         
         let sentCount = 0;
-        let skippedCount = 0;
         let failedCount = 0;
+        let skippedCount = 0;
         let failedEmails = [];
         let successfulEmails = [];
         let skippedEmails = [];
 
-        console.log(`Starting email sending process with batch ID: ${batchId}`);
+        console.log('Starting email sending process...');
         
         for (const recipientEmail of emails) {
             try {
-                console.log(`Attempting to send email to: ${recipientEmail}`);
-                
-                // Create a unique send attempt ID for each recipient
-                const sendAttemptId = `${recipientEmail}-${batchId}-${Math.random().toString(36).substring(2, 10)}`;
-                
-                // Check if this specific send attempt has already been processed
-                const alreadyProcessed = await checkSendAttempt(pool, sendAttemptId);
-                if (alreadyProcessed) {
-                    console.log(`Send attempt ${sendAttemptId} has already been processed`);
-                    skippedCount++;
-                    skippedEmails.push({
-                        email: recipientEmail,
-                        reason: 'Already processed',
-                        timestamp: formatDate(new Date())
-                    });
-                    continue;
-                }
-                
-                // Check if this email has been sent successfully in the last hour
-                const recentlySent = await checkRecentlySent(pool, recipientEmail);
+                // Check if this email was recently sent to
+                const recentlySent = await wasEmailRecentlySent(pool, recipientEmail);
                 if (recentlySent) {
-                    console.log(`Email to ${recipientEmail} was recently sent, skipping`);
-                    await logEmailStatus(
-                        pool, 
-                        recipientEmail, 
-                        'skipped', 
-                        'Email was sent recently', 
-                        null, 
-                        sendAttemptId
-                    );
-                    
+                    console.log(`Email to ${recipientEmail} was recently sent (within 24 hours). Skipping.`);
                     skippedCount++;
                     skippedEmails.push({
                         email: recipientEmail,
-                        reason: 'Recently sent',
+                        reason: 'Recently sent (within 24 hours)',
                         timestamp: formatDate(new Date())
                     });
-                    continue;
+                    continue; // Skip to the next email
                 }
+                
+                console.log(`Attempting to send email to: ${recipientEmail}`);
                 
                 const messageId = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}@naveenak.com`;
                 
@@ -511,44 +458,29 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                 console.log(`Message ID: ${info.messageId}`);
                 console.log(`Response: ${JSON.stringify(info.response)}`);
                 
-                // Log successful email with the message ID and send attempt ID
-                await logEmailStatus(
-                    pool, 
-                    recipientEmail, 
-                    'success', 
-                    `Sent at ${timestamp}`, 
-                    info.messageId, 
-                    sendAttemptId
-                );
+                // Log successful email
+                await logEmailStatus(pool, recipientEmail, 'success', `Sent at ${timestamp}`);
+                
+                // Update the last sent time for this email
+                await updateEmailSentTracking(pool, recipientEmail);
                 
                 sentCount++;
                 successfulEmails.push({
                     email: recipientEmail,
-                    timestamp: timestamp,
-                    messageId: info.messageId
+                    timestamp: timestamp
                 });
                 
-                // Add 90-second delay between emails only if we have more emails to send
+                // Add 90-second delay between emails
                 if (sentCount + skippedCount + failedCount < emails.length) {
-                    console.log(`Waiting 90 seconds before sending next email... (${sentCount + skippedCount + failedCount}/${emails.length} completed)`);
+                    console.log(`Waiting 90 seconds before sending next email... (${sentCount + skippedCount + failedCount}/${emails.length} processed)`);
                     await delay(90000); // 90 seconds in milliseconds
                 }
                 
             } catch (emailError) {
                 console.error(`❌ Failed to send email to ${recipientEmail}:`, emailError);
                 
-                // Create a send attempt ID for error logging
-                const sendAttemptId = `${recipientEmail}-${batchId}-error-${Math.random().toString(36).substring(2, 10)}`;
-                
                 // Log failed email
-                await logEmailStatus(
-                    pool, 
-                    recipientEmail, 
-                    'failed', 
-                    emailError.message, 
-                    null, 
-                    sendAttemptId
-                );
+                await logEmailStatus(pool, recipientEmail, 'failed', emailError.message);
                 
                 failedCount++;
                 failedEmails.push({
@@ -562,15 +494,8 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
         console.log('\n--- Email Sending Summary ---');
         console.log(`Total emails: ${emails.length}`);
         console.log(`Successfully sent: ${sentCount}`);
-        console.log(`Skipped: ${skippedCount}`);
         console.log(`Failed: ${failedCount}`);
-        
-        if (skippedCount > 0) {
-            console.log('\nSkipped email addresses:');
-            skippedEmails.forEach((item, index) => {
-                console.log(`${index + 1}. ${item.email} - Reason: ${item.reason} - Time: ${item.timestamp}`);
-            });
-        }
+        console.log(`Skipped (recently sent): ${skippedCount}`);
         
         if (failedCount > 0) {
             console.log('\nFailed email addresses:');
@@ -578,29 +503,35 @@ exports.sendEmails = (pool, transporter) => async (req, res) => {
                 console.log(`${index + 1}. ${item.email} - Error: ${item.error} - Time: ${item.timestamp}`);
             });
         }
+        
+        if (skippedCount > 0) {
+            console.log('\nSkipped email addresses:');
+            skippedEmails.forEach((item, index) => {
+                console.log(`${index + 1}. ${item.email} - Reason: ${item.reason} - Time: ${item.timestamp}`);
+            });
+        }
 
-        fs.unlinkSync(resumePath);
-        resumePath = null;
+        fs.unlinkSync(req.file.path);
         console.log(`Deleted temporary resume file: ${req.file.path}`);
         
         res.json({ 
-            message: 'Emails processed with 90-second intervals',
+            message: 'Email process completed successfully',
             sentCount: sentCount,
-            skippedCount: skippedCount,
             failedCount: failedCount,
+            skippedCount: skippedCount,
             successfulEmails: successfulEmails,
-            skippedEmails: skippedEmails,
             failedEmails: failedEmails,
-            totalTime: `${Math.max(0, (sentCount - 1)) * 90} seconds`
+            skippedEmails: skippedEmails,
+            totalProcessingTime: `${(sentCount - 1) * 90} seconds`
         });
     } catch (error) {
         console.error('Send emails error:', error);
         
         // Clean up uploaded file if it exists
-        if (resumePath) {
+        if (req.file && req.file.path) {
             try {
-                fs.unlinkSync(resumePath);
-                console.log(`Deleted temporary resume file after error: ${resumePath}`);
+                fs.unlinkSync(req.file.path);
+                console.log(`Deleted temporary resume file after error: ${req.file.path}`);
             } catch (unlinkError) {
                 console.error('Error deleting file:', unlinkError);
             }
@@ -621,27 +552,12 @@ exports.getData = (pool) => async (req, res) => {
 };
 
 // Get email logs
-// Get email logs
 exports.getEmailLogs = (pool) => async (req, res) => {
     try {
-        // Ensure email log table exists with proper schema
+        // Ensure email log table exists
         await createEmailLogTable(pool);
         
-        // Use a query that's resilient to missing columns
-        const result = await pool.query(`
-            SELECT 
-                id, 
-                email, 
-                status, 
-                message, 
-                sent_at,
-                COALESCE(message_id, '') as message_id,
-                COALESCE(send_attempt_id, '') as send_attempt_id
-            FROM 
-                email_logs 
-            ORDER BY 
-                sent_at DESC
-        `);
+        const result = await pool.query('SELECT * FROM email_logs ORDER BY sent_at DESC');
         
         // Format timestamps for frontend display
         const formattedLogs = result.rows.map(log => ({
@@ -655,6 +571,28 @@ exports.getEmailLogs = (pool) => async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+
+// Get email tracking data
+exports.getEmailTrackingData = (pool) => async (req, res) => {
+    try {
+        // Ensure sent email tracking table exists
+        await createSentEmailTrackingTable(pool);
+        
+        const result = await pool.query('SELECT * FROM sent_email_tracking ORDER BY last_sent_at DESC');
+        
+        // Format timestamps for frontend display
+        const formattedData = result.rows.map(entry => ({
+            ...entry,
+            formattedTime: formatDate(new Date(entry.last_sent_at))
+        }));
+        
+        res.json(formattedData);
+    } catch (error) {
+        console.error('Error fetching email tracking data:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
 // Clear email logs
 exports.clearEmailLogs = (pool) => async (req, res) => {
     try {
@@ -666,9 +604,19 @@ exports.clearEmailLogs = (pool) => async (req, res) => {
     }
 };
 
+// Reset email tracking (for testing)
+exports.resetEmailTracking = (pool) => async (req, res) => {
+    try {
+        await pool.query('DELETE FROM sent_email_tracking');
+        res.json({ message: 'Email tracking data reset successfully' });
+    } catch (error) {
+        console.error('Error resetting email tracking:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
 // Send email with custom content
 exports.sendCustomEmail = (pool, transporter) => async (req, res) => {
-    let resumePath = null;
     try {
         console.log('Sending email with custom content...');
         console.log('Environment variables:');
@@ -677,6 +625,8 @@ exports.sendCustomEmail = (pool, transporter) => async (req, res) => {
         
         // Ensure email log table exists
         await createEmailLogTable(pool);
+        // Ensure sent email tracking table exists
+        await createSentEmailTrackingTable(pool);
 
         if (!req.file) {
             console.log('Error: No resume file uploaded');
@@ -690,45 +640,24 @@ exports.sendCustomEmail = (pool, transporter) => async (req, res) => {
             return res.status(400).json({ error: 'No recipient email provided' });
         }
         
+        // Check if this email was recently sent to
+        const recentlySent = await wasEmailRecentlySent(pool, email);
+        if (recentlySent) {
+            console.log(`Email to ${email} was recently sent (within 24 hours). Skipping.`);
+            return res.status(400).json({ 
+                error: 'Email was recently sent',
+                message: 'This email was already sent within the last 24 hours.'
+            });
+        }
+        
         console.log(`Attempting to send email to: ${email}`);
         console.log(`Using default template: ${useDefaultTemplate ? 'Yes' : 'No'}`);
         
-        resumePath = req.file.path;
+        const resumePath = req.file.path;
         const resumeFilename = req.file.originalname;
         const senderName = "NAVEEN K";
         
         console.log(`Resume: ${resumeFilename}, Sender: ${senderName}`);
-        
-        // Create a unique send attempt ID
-        const sendAttemptId = `custom-${email}-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
-        
-        // Check if this specific send attempt has already been processed
-        const alreadyProcessed = await checkSendAttempt(pool, sendAttemptId);
-        if (alreadyProcessed) {
-            console.log(`Send attempt ${sendAttemptId} has already been processed`);
-            return res.json({ 
-                message: `Email to ${email} already processed`,
-                idempotent: true
-            });
-        }
-        
-        // Check if this email has been sent successfully in the last hour
-        const recentlySent = await checkRecentlySent(pool, email);
-        if (recentlySent) {
-            console.log(`Email to ${email} was recently sent, skipping`);
-            await logEmailStatus(
-                pool, 
-                email, 
-                'skipped', 
-                'Email was sent recently', 
-                null, 
-                sendAttemptId
-            );
-            return res.json({ 
-                message: `Email to ${email} was sent recently, skipping to prevent duplicate`,
-                idempotent: true
-            });
-        }
         
         const messageId = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}@naveenak.com`;
         
@@ -789,19 +718,14 @@ exports.sendCustomEmail = (pool, transporter) => async (req, res) => {
         console.log(`Message ID: ${info.messageId}`);
         console.log(`Response: ${JSON.stringify(info.response)}`);
         
-        // Log successful email with message ID and send attempt ID
-        await logEmailStatus(
-            pool, 
-            email, 
-            'success', 
-            `Sent at ${timestamp} - Custom content: ${useDefaultTemplate === 'true' ? 'No' : 'Yes'}`,
-            info.messageId,
-            sendAttemptId
-        );
+        // Log successful email
+        await logEmailStatus(pool, email, 'success', `Sent at ${timestamp} - Custom content: ${useDefaultTemplate === 'true' ? 'No' : 'Yes'}`);
+        
+        // Update the last sent time for this email
+        await updateEmailSentTracking(pool, email);
         
         // Clean up uploaded file
-        fs.unlinkSync(resumePath);
-        resumePath = null;
+        fs.unlinkSync(req.file.path);
         console.log(`Deleted temporary resume file: ${req.file.path}`);
         
         res.json({ 
@@ -814,28 +738,16 @@ exports.sendCustomEmail = (pool, transporter) => async (req, res) => {
     } catch (error) {
         console.error('Send custom email error:', error);
         
-        // Create a send attempt ID for error logging if needed
-        const sendAttemptId = req.body && req.body.email ? 
-            `custom-error-${req.body.email}-${Date.now()}-${Math.random().toString(36).substring(2, 10)}` : 
-            `custom-error-unknown-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
-        
         // Log failed email if email was provided
         if (req.body && req.body.email) {
-            await logEmailStatus(
-                pool, 
-                req.body.email, 
-                'failed', 
-                error.message,
-                null,
-                sendAttemptId
-            );
+            await logEmailStatus(pool, req.body.email, 'failed', error.message);
         }
         
         // Clean up uploaded file if it exists
-        if (resumePath) {
+        if (req.file && req.file.path) {
             try {
-                fs.unlinkSync(resumePath);
-                console.log(`Deleted temporary resume file after error: ${resumePath}`);
+                fs.unlinkSync(req.file.path);
+                console.log(`Deleted temporary resume file after error: ${req.file.path}`);
             } catch (unlinkError) {
                 console.error('Error deleting file:', unlinkError);
             }
