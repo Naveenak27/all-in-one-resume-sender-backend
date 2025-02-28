@@ -621,12 +621,27 @@ exports.getData = (pool) => async (req, res) => {
 };
 
 // Get email logs
+// Get email logs
 exports.getEmailLogs = (pool) => async (req, res) => {
     try {
-        // Ensure email log table exists
+        // Ensure email log table exists with proper schema
         await createEmailLogTable(pool);
         
-        const result = await pool.query('SELECT * FROM email_logs ORDER BY sent_at DESC');
+        // Use a query that's resilient to missing columns
+        const result = await pool.query(`
+            SELECT 
+                id, 
+                email, 
+                status, 
+                message, 
+                sent_at,
+                COALESCE(message_id, '') as message_id,
+                COALESCE(send_attempt_id, '') as send_attempt_id
+            FROM 
+                email_logs 
+            ORDER BY 
+                sent_at DESC
+        `);
         
         // Format timestamps for frontend display
         const formattedLogs = result.rows.map(log => ({
@@ -640,7 +655,6 @@ exports.getEmailLogs = (pool) => async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
-
 // Clear email logs
 exports.clearEmailLogs = (pool) => async (req, res) => {
     try {
