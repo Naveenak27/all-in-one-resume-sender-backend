@@ -857,3 +857,25 @@ exports.sendCustomEmail = (pool, transporter) => async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+exports.deleteEmailLog = (pool) => async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        // Validate that id is a number
+        if (!id || isNaN(parseInt(id))) {
+            return res.status(400).json({ error: 'Invalid ID provided' });
+        }
+        
+        const result = await pool.query('DELETE FROM email_logs WHERE id = $1', [id]);
+        
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Email log not found' });
+        }
+        
+        console.log(`Deleted email log with ID: ${id}`);
+        res.json({ message: 'Email log deleted successfully', id });
+    } catch (error) {
+        console.error('Error deleting email log:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
