@@ -10,9 +10,9 @@ const getEmailHtml = (senderName, emailUser, portfolio) => `
     <div style="padding: 32px 40px;">
         <p style="color: #4a5568; margin: 0 0 20px; line-height: 1.6;">Dear Hiring Manager,</p>
         
-        <p style="color: #4a5568; margin: 0 0 20px; line-height: 1.6;">
-            I trust this message finds you well. I am Naveen, a Frontend Developer with over a year of experience crafting responsive web applications. I am writing to express my interest in contributing to your development team.
-        </p>
+       <p style="color: #4a5568; margin: 0 0 20px; line-height: 1.6;">
+    I trust this message finds you well. I am Naveen, a Frontend Developer with nearly 2 years of experience building modern web applications using React, TypeScript and Next.js. My expertise includes developing responsive interfaces, optimizing performance, and implementing complex user interactions.
+</p>
 
         <div style="border-left: 3px solid #2b3d4f; padding-left: 20px; margin: 20px 0;">
             <p style="color: #4a5568; margin: 0 0 16px; line-height: 1.6;">
