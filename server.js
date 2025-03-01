@@ -75,6 +75,7 @@ app.delete('/api/delete/:id', controller.deleteRecord(pool));
 // Get email tracking data
 
 // Clear email tracking data
+app.delete('/api/delete/:id', controller.deleteRecord(pool));
 app.post('/api/send-custom-email', upload.single('resume'), sendCustomEmail(pool, transporter));
 app.delete('/api/delete-all', controller.deleteAllRecords(pool));
 app.get('/api/health', controller.healthCheck);
