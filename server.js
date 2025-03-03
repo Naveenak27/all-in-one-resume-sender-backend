@@ -3,6 +3,7 @@ const express = require('express');
 const multer = require('multer');
 const cors = require('cors');
 const { Pool } = require('pg');
+
 const nodemailer = require('nodemailer');
 const controller = require('./controllerAttachment');
 const { 
@@ -75,6 +76,8 @@ app.delete('/api/delete/:id', controller.deleteRecord(pool));
 // Get email tracking data
 
 // Clear email tracking data
+app.delete('/api/clear-failed-email-logs', controller.clearFailedEmailLogs(pool));
+
 app.post('/api/send-custom-email', upload.single('resume'), sendCustomEmail(pool, transporter));
 app.delete('/api/delete-all', controller.deleteAllRecords(pool));
 // In your routes file
