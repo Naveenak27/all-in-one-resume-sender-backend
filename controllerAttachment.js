@@ -7,6 +7,29 @@ const { getEmailHtml, getEmailText } = require('./emailTemplate');
 exports.healthCheck = (req, res) => {
     res.json({ status: 'Server is running' });
 };
+// Clear failed email logs
+exports.clearFailedEmailLogs = (pool) => async (req, res) => {
+    try {
+        // Delete all logs where status is not 'success'
+        const result = await pool.query(`
+            DELETE FROM email_logs 
+            WHERE status != 'success' 
+            RETURNING id
+        `);
+        
+        const deletedCount = result.rowCount || 0;
+        
+        console.log(`Deleted ${deletedCount} failed email logs`);
+        
+        res.json({ 
+            message: 'Failed email logs cleared successfully',
+            count: deletedCount
+        });
+    } catch (error) {
+        console.error('Error clearing failed email logs:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
 
 // Delete single record
 exports.deleteRecord = (pool) => async (req, res) => {
