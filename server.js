@@ -78,6 +78,7 @@ app.delete('/api/delete/:id', controller.deleteRecord(pool));
 // Clear email tracking data
 app.delete('/api/clear-failed-email-logs', controller.clearFailedEmailLogs(pool));
 
+
 app.post('/api/send-custom-email', upload.single('resume'), sendCustomEmail(pool, transporter));
 app.delete('/api/delete-all', controller.deleteAllRecords(pool));
 // In your routes file
